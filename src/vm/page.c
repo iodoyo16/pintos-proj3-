@@ -12,26 +12,26 @@
 #include "threads/vaddr.h"
 #include "userprog/pagedir.h"
 
-static unsigned supte_hash_func(const struct hash_elem *elem, void *aux);
-static bool supte_less_func(const struct hash_elem *, const struct hash_elem *, void *aux);
+static unsigned pte_hash_func(const struct hash_elem *elem, void *aux);
+static bool pte_less_func(const struct hash_elem *, const struct hash_elem *, void *aux);
 static void pte_destroy_func(struct hash_elem *elem, void *aux);
 static bool vm_load_page_from_filesys(struct vm_pt_entry *, void *);
 
 //vm_page_hashtable 을 생성하는 함수
-struct vm_page_table *vm_supt_create(void){
+struct vm_page_table *vm_pt_create(void){
     struct vm_page_table *pt = 
     (struct vm_page_table *) malloc(sizeof(struct vm_page_table));
     struct hash* page_hash_table=&pt->page_hashmap;
-    hash_init(page_hash_table, supte_hash_func, supte_less_func, NULL);
+    hash_init(page_hash_table, pte_hash_func, pte_less_func, NULL);
     return pt;
 }
 // supplemental table 의 entry를 초기화 할때 쓰는 hash func;
-static unsigned supte_hash_func(const struct hash_elem *elem, void *aux UNUSED){
+static unsigned pte_hash_func(const struct hash_elem *elem, void *aux UNUSED){
     struct vm_pt_entry *entry = hash_entry(elem, struct vm_pt_entry, elem);
     return hash_int((int)entry->upage);
 }
 // supplemental table 의 entry를 비교하는 함수
-static bool supte_less_func(const struct hash_elem *a, const struct hash_elem *b, void *aux UNUSED){
+static bool pte_less_func(const struct hash_elem *a, const struct hash_elem *b, void *aux UNUSED){
     struct vm_pt_entry *s = hash_entry(a, struct vm_pt_entry, elem);
     struct vm_pt_entry *e = hash_entry(b, struct vm_pt_entry, elem);
     return s -> upage < e -> upage;
@@ -58,7 +58,7 @@ static void pte_destroy_func(struct hash_elem *elem, void *aux UNUSED){
 /*생성된 page의 주소(upage,kpage) 를 전달받고, 
 page table entry를 생성해 초기화하고
 page_hash_table에 insert한다.*/
-bool vm_supt_install_frame(struct vm_page_table *pt, void *upage, void *kpage){
+bool vm_pt_install_frame(struct vm_page_table *pt, void *upage, void *kpage){
     struct vm_pt_entry *page_hash_table_entry;
     page_hash_table_entry = (struct vm_pt_entry *) malloc(sizeof(struct vm_pt_entry));
 
@@ -102,7 +102,7 @@ bool expand_stack (struct vm_page_table *pt, void *upage){
 /*생성된 page의 주소(upage) 를 전달받고, 
 page table entry를 생성해 초기화하고 (status 가 FROM_FILESYS)
 page_hash_table에 insert한다.*/
-bool vm_supt_install_filesys(struct vm_page_table *pt, void *upage,
+bool vm_pt_install_filesys(struct vm_page_table *pt, void *upage,
     struct file *file, off_t offset, uint32_t read_bytes, uint32_t zero_bytes,bool writable){
     struct vm_pt_entry *page_hash_table_entry;
     page_hash_table_entry = (struct vm_pt_entry *) malloc(sizeof(struct vm_pt_entry));
@@ -128,9 +128,9 @@ bool vm_supt_install_filesys(struct vm_page_table *pt, void *upage,
 }
 /*vm_supt_look_up을 이용해서 page_table_entry의 flag
 를 swap 으로 set 한다 (ON_SWAP)*/
-bool vm_supt_set_swap(struct vm_page_table *pt, void *page, swap_index_t swap_index){
-    struct vm_pt_entry *page_hash_table_entry;
-    page_hash_table_entry = vm_supt_look_up(pt,page);
+bool vm_pt_set_swap(struct vm_page_table *pt, void *page, swap_index_t swap_index){
+    struct vm_pt_entry* page_hash_table_entry;
+    page_hash_table_entry = vm_pt_look_up(pt,page);
     if(page_hash_table_entry != NULL){
         page_hash_table_entry -> status = ON_SWAP;
         page_hash_table_entry -> kpage = NULL;
@@ -141,7 +141,7 @@ bool vm_supt_set_swap(struct vm_page_table *pt, void *page, swap_index_t swap_in
 }
 /* param page로 (upage) 로 hash_find 를 이용해 page_table_entry 포인터를 
 반환 받는다*/
-struct vm_pt_entry *vm_supt_look_up (struct vm_page_table *pt, void *page){
+struct vm_pt_entry* vm_pt_look_up (struct vm_page_table* pt, void *page){
     struct vm_pt_entry tmp_entry;
     tmp_entry.upage = page;
     struct hash* page_hash_table=&pt->page_hashmap;
@@ -152,16 +152,16 @@ struct vm_pt_entry *vm_supt_look_up (struct vm_page_table *pt, void *page){
     return NULL; 
 }
 /*page_table에 entry 가 있는지 주소값을 이용해 확인*/
-bool vm_supt_has_entry(struct vm_page_table *supt, void *page){
-    struct vm_pt_entry *page_table_entry = vm_supt_look_up(supt, page);
+bool vm_pt_has_entry(struct vm_page_table *pt, void *page){
+    struct vm_pt_entry *page_table_entry = vm_pt_look_up(pt, page);
     if(page_table_entry == NULL)
         return false;
     else
         return true;
 }
 /*entry에 dirty bit 를 set 한다*/
-bool vm_supt_set_dirty(struct vm_page_table *supt, void *page, bool value){
-    struct vm_pt_entry *page_table_entry = vm_supt_look_up(supt,page);
+bool vm_pt_set_dirty(struct vm_page_table *pt, void *page, bool value){
+    struct vm_pt_entry *page_table_entry = vm_pt_look_up(pt,page);
     if(page_table_entry == NULL){
         return false;
     }
@@ -172,10 +172,10 @@ bool vm_supt_set_dirty(struct vm_page_table *supt, void *page, bool value){
 }
 /* Load the page with the address of 'upage'. */
 /*entry 에 mapping 되어 있지만 메모리에 load 되지 않은 page를 load 한다.*/
-bool handle_mm_fault(struct vm_page_table *supt, uint32_t *pagedir, void *upage){
+bool handle_mm_fault(struct vm_page_table *pt, uint32_t *pagedir, void *upage){
     // entry 에 mapping 되어 있는지 확인, 없으면 false return
     struct vm_pt_entry *pte;
-    pte = vm_supt_look_up(supt, upage);
+    pte = vm_pt_look_up(pt, upage);
     if(pte == NULL)
         return false;
     //이미 로드 되었을때
@@ -222,9 +222,9 @@ bool handle_mm_fault(struct vm_page_table *supt, uint32_t *pagedir, void *upage)
     return true;
 }
 
-bool vm_supt_mm_unmap(struct vm_page_table *supt, uint32_t *pagedir, void *page, 
+bool vm_pt_mm_unmap(struct vm_page_table *pt, uint32_t *pagedir, void *page, 
       struct file *file, off_t offset, size_t bytes){
-    struct vm_pt_entry *pt_entry = vm_supt_look_up(supt, page);
+    struct vm_pt_entry *pt_entry = vm_pt_look_up(pt, page);
     if(pt_entry == NULL)
         PANIC("Some pages are missing");
     if(pt_entry->status == ON_FRAME){
@@ -264,53 +264,53 @@ bool vm_supt_mm_unmap(struct vm_page_table *supt, uint32_t *pagedir, void *page,
         }
     }
     // page table 에서 entry 삭제
-    hash_delete(&supt->page_hashmap, &pt_entry->elem);
+    hash_delete(&pt->page_hashmap, &pt_entry->elem);
     return true;
 }    
 
-void vm_pin_page(struct vm_page_table *supt, void *page){
-    struct vm_pt_entry *pt_entry = vm_supt_look_up(supt, page);
+void vm_pin_page(struct vm_page_table *pt, void *page){
+    struct vm_pt_entry *pt_entry = vm_pt_look_up(pt, page);
     if(pt_entry != NULL){
         ASSERT(pt_entry->status == ON_FRAME);
         vm_frame_pin(pt_entry->kpage);
     }
 }
-void vm_unpin_page(struct vm_page_table *supt, void *page){
-    struct vm_pt_entry *pt_entry = vm_supt_look_up(supt, page);
+void vm_unpin_page(struct vm_page_table *pt, void *page){
+    struct vm_pt_entry *pt_entry = vm_pt_look_up(pt, page);
     if(pt_entry != NULL&&pt_entry->status == ON_FRAME)
         vm_frame_unpin(pt_entry->kpage);
 }
 
-static bool vm_load_page_from_filesys(struct vm_pt_entry *supte, void *kpage){
-    file_seek(supte->file, supte->file_offset);
+static bool vm_load_page_from_filesys(struct vm_pt_entry *pte, void *kpage){
+    file_seek(pte->file, pte->file_offset);
 
     //read bytes from the file
-    int read = file_read(supte->file, kpage, supte->read_bytes);
-    if(read != (int) supte->read_bytes)
+    int read = file_read(pte->file, kpage, pte->read_bytes);
+    if(read != (int) pte->read_bytes)
         return false;
-    ////ASSERT(supte->read_bytes + supte-> zero_bytes == PGSIZE);
-    memset(kpage + read, 0, supte->zero_bytes);
+    ////ASSERT(pte->read_bytes + pte-> zero_bytes == PGSIZE);
+    memset(kpage + read, 0, pte->zero_bytes);
     return true;
 }
 
 void preload_and_pin_pages(const void *buffer, size_t size)
 {
-  struct vm_page_table *supt = thread_current()->supt;
+  struct vm_page_table *pt = thread_current()->supt;
   uint32_t *pagedir = thread_current()->pagedir;
   void *upage=pg_round_down(buffer);
   while(upage < buffer + size){
-    handle_mm_fault(supt, pagedir, upage);
-    vm_pin_page (supt, upage);
+    handle_mm_fault(pt, pagedir, upage);
+    vm_pin_page (pt, upage);
     upage += PGSIZE;
   }
 }
 
 void unpin_preloaded_pages(const void *buffer, size_t size)
 {
-  struct vm_page_table *supt = thread_current()->supt;
+  struct vm_page_table *pt = thread_current()->supt;
   void *upage=pg_round_down(buffer);
   while(upage < buffer + size){
-    vm_unpin_page (supt, upage);
+    vm_unpin_page (pt, upage);
     upage += PGSIZE;
   }
 }

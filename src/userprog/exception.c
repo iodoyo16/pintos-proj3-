@@ -164,7 +164,7 @@ page_fault (struct intr_frame *f)
     bool is_user_stack, avaialbe_push;
     is_user_stack = (PHYS_BASE - MAX_STACK_SIZE <= fault_addr && fault_addr < PHYS_BASE);
     avaialbe_push = (esp <= fault_addr || fault_addr == f->esp - 4 || fault_addr == f->esp - 32);
-    if(vm_supt_look_up(curr->supt,fault_page)){
+    if(vm_pt_look_up(curr->supt,fault_page)){
       handle_mm_fault(curr->supt, curr->pagedir, fault_page);
     }
     else if (is_user_stack && avaialbe_push) {

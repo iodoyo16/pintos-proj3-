@@ -440,7 +440,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
   /* Allocate and activate page directory, as well as SPTE. */
   t->pagedir = pagedir_create ();
 #ifdef VM
-  t->supt = vm_supt_create ();
+  t->supt = vm_pt_create ();
 #endif
 
   if (t->pagedir == NULL)
@@ -628,7 +628,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       struct thread *curr = thread_current ();
       ASSERT (pagedir_get_page(curr->pagedir, upage) == NULL); // no virtual page yet?
 
-      if (! vm_supt_install_filesys(curr->supt, upage,
+      if (! vm_pt_install_filesys(curr->supt, upage,
             file, ofs, page_read_bytes, page_zero_bytes, writable) ) {
         return false;
       }
@@ -706,7 +706,7 @@ install_page (void *upage, void *kpage, bool writable)
   bool get_success = (pagedir_get_page (t->pagedir, upage) == NULL);
   bool success = get_success && pagedir_set_page (t->pagedir, upage, kpage, writable);
 #ifdef VM
-  success = success && vm_supt_install_frame (t->supt, upage, kpage);
+  success = success && vm_pt_install_frame (t->supt, upage, kpage);
   if(success) vm_frame_unpin(kpage);
 #endif
   return success;

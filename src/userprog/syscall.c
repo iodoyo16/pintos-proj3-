@@ -291,7 +291,7 @@ mmapid_t sys_mmap(int fd, void *upage) {
   size_t offset;
   for (offset = 0; offset < file_size; offset += PGSIZE) {
     void *addr = upage + offset;
-    if (vm_supt_has_entry(cur->supt, addr)) goto MMAP_FAIL;
+    if (vm_pt_has_entry(cur->supt, addr)) goto MMAP_FAIL;
   }
 
   /* Now, map each page to filesystem */
@@ -301,7 +301,7 @@ mmapid_t sys_mmap(int fd, void *upage) {
     size_t read_bytes = (offset + PGSIZE < file_size ? PGSIZE : file_size - offset);
     size_t zero_bytes = PGSIZE - read_bytes;
 
-    vm_supt_install_filesys(cur->supt, addr,
+    vm_pt_install_filesys(cur->supt, addr,
         f, offset, read_bytes, zero_bytes, true);
   }
 
@@ -344,7 +344,7 @@ void sys_munmap(mmapid_t mid)
     for(offset = 0; offset < file_size; offset += PGSIZE) {
       void *addr = mmap_d->addr + offset;
       size_t bytes = (offset + PGSIZE < file_size ? PGSIZE : file_size - offset);
-      vm_supt_mm_unmap (curr->supt, curr->pagedir, addr, mmap_d->file, offset, bytes);
+      vm_pt_mm_unmap (curr->supt, curr->pagedir, addr, mmap_d->file, offset, bytes);
     }
 
     // Free resources, and remove from the list

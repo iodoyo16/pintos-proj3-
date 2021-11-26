@@ -97,10 +97,9 @@ struct thread
     int priority;                       /* Priority. */
     
 
-    /* Aging */
-    int nice;
-    int recent_cpu;
-
+    /* mulfq , aging */
+   int nice;
+   int recent_cpu;
    struct list_elem allelem;           
    struct list_elem waitelem;          /* wait list */
     /*thread.c synch.c. */
