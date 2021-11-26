@@ -56,5 +56,6 @@ void process_exit (void);
 void process_activate (void);
 /* Project 3 */
 struct process_control_block *process_find_child(pid_t pid);
+void push_userstack(const char** parsed_filename_argv, int argc,void **esp);
 int parse_file_name(char *input, const char **parsed_filename_argv);
 #endif /* userprog/process.h */

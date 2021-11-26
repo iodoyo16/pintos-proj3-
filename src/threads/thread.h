@@ -120,7 +120,7 @@ struct thread
     uint8_t *current_esp;              
 #endif
 #ifdef VM
-   struct supplemental_page_table *supt;  /* Supplemental Page Table*/
+   struct vm_page_table *supt;  /* Supplemental Page Table*/
    struct list mmap_list;                 /* List of mmap descriptors*/
 #endif
 
