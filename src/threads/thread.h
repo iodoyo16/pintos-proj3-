@@ -88,36 +88,35 @@ typedef int tid_t;
    blocked state is on a semaphore wait list. */
 struct thread
   {
-    /* Owned by thread.c. */
+    /* thread.c. */
     tid_t tid;                          /* Thread identifier. */
     enum thread_status status;          /* Thread state. */
     char name[16];                      /* Name (for debugging purposes). */
     uint8_t *stack;                     /* Saved stack pointer. */
-    int priority;                       /* Priority. */
-    //int original_priority;
     int64_t sleep_endtick;
+    int priority;                       /* Priority. */
+    
 
     /* Aging */
     int nice;
     int recent_cpu;
 
-
-   struct list_elem allelem;           /* List element for all threads list. */
-   struct list_elem waitelem;          /* List element stored in the wait queue */
-    /* Shared between thread.c and synch.c. */
-    struct list_elem elem;              /* List element. */
+   struct list_elem allelem;           
+   struct list_elem waitelem;          /* wait list */
+    /*thread.c synch.c. */
+    struct list_elem elem;              
     struct list locks;
     struct lock *waiting_lock;
 
 #ifdef USERPROG
-    /* Owned by userprog/process.c. */
+    /* process.c. */
     uint32_t *pagedir;                  /* Page directory. */
-    /* Owned by userprog/process.c. and userprog/syscall.c */
-    struct process_control_block *pcb; /*Process Control Block */
-    struct list child_list;            /* List of children processes */
-    struct list file_descriptors;      /* List of file_descriptors the thread contains */
+    /* process.c syscall.c */
     struct list_elem child;
-    struct file *executing_file;       /* The executable file of process */
+    struct file *executing_file;
+    struct process_control_block *pcb; 
+    struct list child_list;            
+    struct list file_descriptors;      
     uint8_t *current_esp;              
 #endif
 #ifdef VM
@@ -168,8 +167,6 @@ void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 void recent_cpu_inc(void);
-void update_load_avg(void);
-void update_recent_cpu(void);
 
 void update_recent_cpu_load_avg(void);
 void update_priority(void);
@@ -196,6 +193,6 @@ void thread_awake(int64_t current_tick);
 bool compare_priority(const struct list_elem *e1, const struct list_elem *e2, void *aux);\
 void thread_aging(void);
 int nearest_int(int num);
-int max_priority(void);
+int get_max_priority(void);
 
 #endif /* threads/thread.h */

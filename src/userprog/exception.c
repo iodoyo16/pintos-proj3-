@@ -121,12 +121,10 @@ kill (struct intr_frame *f)
    [IA32-v3a] section 5.15 "Exception and Interrupt Reference". */
 static void
 page_fault (struct intr_frame *f) 
-{ /* True: not-present page, false: writing r/o page. */
-  bool not_present;  
-  /* True: access was write, false: access was read. */
-  bool write;  
-  /* True: access by user, false: access by kernel. */      
-  bool user;         
+{ 
+  bool not_present;  /* not-present page / writing r/o page. */
+  bool write;  /*  write access /  read access */
+  bool user;   /* user  access/ kernel access. */      
   /* Fault address. */
   void *fault_addr;  
 
@@ -139,8 +137,7 @@ page_fault (struct intr_frame *f)
      (#PF)". */
   asm ("movl %%cr2, %0" : "=r" (fault_addr));
 
-  /* Turn interrupts back on (they were only off so that we could
-     be assured of reading CR2 before it changed). */
+
   intr_enable ();
 
   /* Count page faults. */
@@ -156,33 +153,30 @@ page_fault (struct intr_frame *f)
    * First, bring in the page to which fault_addr refers. */
   struct thread *curr = thread_current(); /* Current thread. */
   void* fault_page = (void*) pg_round_down(fault_addr);
-  //printf("vm1\n");
   if (!not_present) {
-    // attempt to write to a read-only region is always killed.
+    // read only page
     goto PAGE_FAULT_VIOLATED_ACCESS;
   }
-  
-  void* esp = user ? f->esp : curr->current_esp;
+  else{
+    void* esp = user ? f->esp : curr->current_esp;
 
-  // Stack Growth
-  bool is_user_stack, avaialbe_push;
-  is_user_stack = (PHYS_BASE - MAX_STACK_SIZE <= fault_addr && fault_addr < PHYS_BASE);
-  //printf("vm2\n");
-  avaialbe_push = (esp <= fault_addr || fault_addr == f->esp - 4 || fault_addr == f->esp - 32);
-  if (is_user_stack && avaialbe_push) {
-    // we need to add new page entry in the SUPT, if there was no page entry in the SUPT.
-    // A promising choice is assign a new zero-page.
-    //printf("vm3\n");
-    if (vm_supt_has_entry(curr->supt, fault_page) == false)
-      expand_stack(curr->supt, fault_page);
+    // growin stack
+    bool is_user_stack, avaialbe_push;
+    is_user_stack = (PHYS_BASE - MAX_STACK_SIZE <= fault_addr && fault_addr < PHYS_BASE);
+    avaialbe_push = (esp <= fault_addr || fault_addr == f->esp - 4 || fault_addr == f->esp - 32);
+    if(vm_supt_look_up(curr->supt,fault_page)){
+      handle_mm_fault(curr->supt, curr->pagedir, fault_page);
+    }
+    else if (is_user_stack && avaialbe_push) {
+        expand_stack(curr->supt, fault_page);
+        handle_mm_fault(curr->supt, curr->pagedir, fault_page);
+    }
+    else{
+      sys_exit(-1);
+    }
+    // success
+    return;
   }
-  if(! handle_mm_fault(curr->supt, curr->pagedir, fault_page) ) {
-    //printf("vm4\n");
-    goto PAGE_FAULT_VIOLATED_ACCESS;
-  }
-  // success
-  return;
-
 PAGE_FAULT_VIOLATED_ACCESS:
 #endif
   //printf("vm5\n");

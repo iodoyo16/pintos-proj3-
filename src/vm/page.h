@@ -11,7 +11,7 @@ enum page_status {
     FROM_FILESYS/* In filesystem. */
 };
 
-/* Supplemental page table. It is perprocessable. */
+/* Supplemental page table. It is preprocessable. */
 struct supplemental_page_table {
     struct hash page_map;
 };

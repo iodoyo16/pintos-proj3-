@@ -299,13 +299,11 @@ process_exit (void)
   }
 
 #ifdef VM
-  // mmap descriptors
+  // descriptors erase
   struct list *mmlist = &cur->mmap_list;
   while (!list_empty(mmlist)) {
     struct list_elem *cur_e = list_begin (mmlist);
     struct mmap_desc *desc = list_entry(cur_e, struct mmap_desc, elem);
-
-    // in sys_munmap(), the element is removed from the list
     sys_munmap (desc->id);
     //ASSERT( sys_munmap (desc->id) == true );
   }
@@ -626,7 +624,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
 #ifdef VM
-      // Lazy load. . .
+      // demand paging(lazy load) 구현
       struct thread *curr = thread_current ();
       ASSERT (pagedir_get_page(curr->pagedir, upage) == NULL); // no virtual page yet?
 

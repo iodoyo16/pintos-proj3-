@@ -406,16 +406,6 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
-  // if(thread_mlfqs) 
-  //   return;
-  // struct thread *cur_thread = thread_current();
-
-  // cur_thread -> priority = new_priority;
-  // if(!list_empty(&ready_list)){
-  //   struct list_elem *e = list_begin(&ready_list);
-  //   if(e !=NULL && new_priority < list_entry(e , struct thread, elem)->priority)
-  //     thread_yield();
-  // }
   if(thread_mlfqs)
     return;
   int cur_priority=thread_current()->priority;
@@ -439,11 +429,6 @@ thread_set_nice (int nice UNUSED)
   intr_disable();
   struct thread *cur_t = thread_current();
   cur_t->nice = nice;
-  // //t->priority = (PRI_MAX - (t->recent_cpu / 4) - (nice * 2));
-  // t-> priority = ((PRI_MAX * FRACTION) - (t->recent_cpu / 4) - (nice * 2 * FRACTION)) / FRACTION;
-  // //t->priority = ((PRI_MAX * FRACTION) - (t->recent_cpu / 4) - ((nice * FRACTION) * 2)) / FRACTION;
-  // if(t->priority > PRI_MAX) t->priority = PRI_MAX;
-  // if(t->priority < PRI_MIN) t->priority = PRI_MIN;
   //update_priority();
   int calc=calc_priority(cur_t);
   if(calc>PRI_MAX){
@@ -455,7 +440,7 @@ thread_set_nice (int nice UNUSED)
   else{
     cur_t->priority=calc;
   }
-  if(max_priority()>cur_t->priority)
+  if(get_max_priority()>cur_t->priority)
     thread_yield();
   intr_enable();
 }
@@ -751,24 +736,13 @@ bool compare_priority(const struct list_elem *e1, const struct list_elem *e2, vo
 }
 
 void thread_aging(){
-  struct thread *t;
-  struct list_elem *e;
-
-  for(e = list_begin(&all_list);e != list_end(&all_list);e = list_next(e)){
-    t = list_entry(e,struct thread, allelem);
-    //t->priority = ((PRI_MAX * FRACTION) - ((t->recent_cpu)/4) - ((t->nice * 2)* FRACTION)) >> 14;
-    t->priority = ((PRI_MAX * FRACTION) - ((t->recent_cpu)/4) - ((t->nice * 2)* FRACTION)) / FRACTION;
-    if(t->priority > PRI_MAX) t->priority = PRI_MAX;
-    if(t->priority < PRI_MIN) t->priority = PRI_MIN;
-  }
-  
-  if(thread_current()->priority < max_priority()){
+  update_priority();
+  if(thread_current()->priority < get_max_priority()){
     intr_yield_on_return();
-    //thread_yield();
   }
 }
 
-int max_priority(void){
+int get_max_priority(void){
   int priority = -1;
 
   if(!list_empty(&ready_list)){
@@ -787,25 +761,36 @@ void recent_cpu_inc(void){
     cur_t->recent_cpu=f_add_i(thread_current()->recent_cpu,1);
   }
 }
+void update_recent_cpu_load_avg(){
+  int R_threads=0;
+  if(thread_current()!=idle_thread)
+    R_threads+=1;
+  R_threads+=list_size(&ready_list);
 
-void update_load_avg(){
-  int ready_threads = list_size(&ready_list);
-  if(thread_current() != idle_thread) ready_threads += 1;
-  load_avg = ((59 * load_avg) + (ready_threads * FRACTION)) / 60;
-  if(load_avg < 0) load_avg = 0;
+  load_avg=calc_load_avg(R_threads);
+  //printf("\nLOAD AVG: %d\n",load_avg);
+  struct list_elem* cur_e;
+  for(cur_e=list_begin(&all_list);cur_e!=list_end(&all_list);cur_e=list_next(cur_e)){
+    struct thread* cur_t=list_entry(cur_e,struct thread,allelem);
+    if(cur_t==idle_thread){
+      continue;
+    }
+    cur_t->recent_cpu=calc_recent_cpu(cur_t);
+  }
 }
-
-void update_recent_cpu(){
-  struct thread *t;
-  struct list_elem *e;
-
-  for(e = list_begin(&all_list);e != list_end(&all_list);e = list_next(e)){
-    t = list_entry(e, struct thread, allelem);
-    if(t != idle_thread){
-      t->recent_cpu = ((int64_t)((int64_t)2 * load_avg) * FRACTION / (2*load_avg + (1*FRACTION))) * t->recent_cpu
-        / FRACTION + (t->nice) * FRACTION;
+void update_priority(){
+  struct list_elem* cur_e;
+  for(cur_e=list_begin(&all_list);cur_e!=list_end(&all_list);cur_e=list_next(cur_e)){
+    struct thread* cur_t=list_entry(cur_e,struct thread, allelem);
+    int calc=calc_priority(cur_t);
+    if(calc>PRI_MAX){
+      cur_t->priority=PRI_MAX;
+    }
+    else if(calc<PRI_MIN){
+      cur_t->priority=PRI_MIN;
+    }
+    else{
+      cur_t->priority=calc;
     }
   }
-
-
 }

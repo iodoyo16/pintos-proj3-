@@ -147,8 +147,8 @@ vm_frame_do_free (void *kpage, bool free_page)
   free(f);
 }
 
-/* Second Chance Algorithm */
 struct frame_table_entry* next_frame(void);
+/* Second Chance Algorithm */
 struct frame_table_entry* second_chance( uint32_t *pagedir ) {
   size_t n = hash_size(&frame_map);
   if(n == 0) 

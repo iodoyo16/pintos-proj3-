@@ -17,14 +17,16 @@ static bool supte_less_func(const struct hash_elem *, const struct hash_elem *, 
 static void supte_destroy_func(struct hash_elem *elem, void *aux);
 static bool vm_load_page_from_filesys(struct supplemental_page_table_entry *, void *);
 
+//vm_supt 을 생성하는 함수
 struct supplemental_page_table *vm_supt_create(void){
     struct supplemental_page_table *supt = 
     (struct supplemental_page_table *) malloc(sizeof(struct supplemental_page_table));
-
-    hash_init(&supt->page_map, supte_hash_func, supte_less_func, NULL);
+    struct hash* page_hash_table=&supt->page_map;
+    hash_init(page_hash_table, supte_hash_func, supte_less_func, NULL);
     return supt;
 }
 
+//vm_supt 을 삭제하는 함수
 void vm_supt_destroy(struct supplemental_page_table *supt){
     ASSERT(supt != NULL);
     hash_destroy(&supt->page_map, supte_destroy_func);
@@ -252,7 +254,7 @@ void vm_unpin_page(struct supplemental_page_table *supt, void *page){
 }
 
 
-
+// supplemental table 의 entry를 초기화 할때 쓰는 hash func;
 static unsigned supte_hash_func(const struct hash_elem *elem, void *aux UNUSED){
     struct supplemental_page_table_entry *entry = hash_entry(elem, struct supplemental_page_table_entry, elem);
     return hash_int((int)entry->upage);

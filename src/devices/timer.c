@@ -174,21 +174,16 @@ static void
 timer_interrupt (struct intr_frame *args UNUSED)
 {
   ticks++;
-  //thread_tick (timer_ticks());
-  //if(thread_mlfqs || thread_prior_aging)
   if(thread_mlfqs){
     recent_cpu_inc();
   }
   thread_awake(ticks);
   if(thread_mlfqs){
   //if(thread_prior_aging || thread_mlfqs){
-    //recent_cpu is updated in every second
-    if(timer_ticks() % TIMER_FREQ == 0){
-      update_load_avg();
-      update_recent_cpu();
+    if(timer_ticks() % TIMER_FREQ == 0){// load_avg and recent_cpu updates every second
+      update_recent_cpu_load_avg();
     }
-    //Every 4 ticks, priorities are recalculated
-    if(timer_ticks() % 4 == 0){
+    if(timer_ticks() % 4 == 0){// priority is recalculated every 4 ticks
       thread_aging();
     }
   }
