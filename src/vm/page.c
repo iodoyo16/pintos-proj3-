@@ -14,7 +14,7 @@
 
 static unsigned supte_hash_func(const struct hash_elem *elem, void *aux);
 static bool supte_less_func(const struct hash_elem *, const struct hash_elem *, void *aux);
-static void supte_destroy_func(struct hash_elem *elem, void *aux);
+static void pte_destroy_func(struct hash_elem *elem, void *aux);
 static bool vm_load_page_from_filesys(struct vm_pt_entry *, void *);
 
 //vm_page_hashtable 을 생성하는 함수
@@ -25,15 +25,36 @@ struct vm_page_table *vm_supt_create(void){
     hash_init(page_hash_table, supte_hash_func, supte_less_func, NULL);
     return pt;
 }
-
-//vm_page_hashtable 을 삭제하는 함수
-void vm_supt_destroy(struct vm_page_table *pt){
-    ASSERT(pt != NULL);
-    struct hash* page_hash_table=&pt->page_hashmap;
-    hash_destroy(page_hash_table, supte_destroy_func);
-    free(pt);
+// supplemental table 의 entry를 초기화 할때 쓰는 hash func;
+static unsigned supte_hash_func(const struct hash_elem *elem, void *aux UNUSED){
+    struct vm_pt_entry *entry = hash_entry(elem, struct vm_pt_entry, elem);
+    return hash_int((int)entry->upage);
+}
+// supplemental table 의 entry를 비교하는 함수
+static bool supte_less_func(const struct hash_elem *a, const struct hash_elem *b, void *aux UNUSED){
+    struct vm_pt_entry *s = hash_entry(a, struct vm_pt_entry, elem);
+    struct vm_pt_entry *e = hash_entry(b, struct vm_pt_entry, elem);
+    return s -> upage < e -> upage;
 }
 
+
+//vm_page_hashtable 을 삭제하는 함수
+void vm_page_table_destroy(struct vm_page_table *pt){
+    ASSERT(pt != NULL);
+    struct hash* page_hash_table=&pt->page_hashmap;
+    hash_destroy(page_hash_table, pte_destroy_func);
+    free(pt);
+}
+static void pte_destroy_func(struct hash_elem *elem, void *aux UNUSED){
+    struct vm_pt_entry *pt_entry = hash_entry(elem, struct vm_pt_entry, elem);
+    if(pt_entry->kpage != NULL){
+        vm_frame_remove_entry(pt_entry->kpage); //frame 삭제
+    }
+    else if(pt_entry -> status == ON_SWAP){
+        vm_swap_free(pt_entry->swap_index); // swap free
+    }
+    free(pt_entry); //pte free
+}
 /*생성된 page의 주소(upage,kpage) 를 전달받고, 
 page table entry를 생성해 초기화하고
 page_hash_table에 insert한다.*/
@@ -130,68 +151,70 @@ struct vm_pt_entry *vm_supt_look_up (struct vm_page_table *pt, void *page){
     }
     return NULL; 
 }
+/*page_table에 entry 가 있는지 주소값을 이용해 확인*/
 bool vm_supt_has_entry(struct vm_page_table *supt, void *page){
-    struct vm_pt_entry *supte = vm_supt_look_up(supt, page);
-    if(supte == NULL)
+    struct vm_pt_entry *page_table_entry = vm_supt_look_up(supt, page);
+    if(page_table_entry == NULL)
         return false;
     else
         return true;
 }
+/*entry에 dirty bit 를 set 한다*/
 bool vm_supt_set_dirty(struct vm_page_table *supt, void *page, bool value){
-    struct vm_pt_entry *supte = vm_supt_look_up(supt,page);
-    if(supte == NULL)
-        PANIC("No exist.");
+    struct vm_pt_entry *page_table_entry = vm_supt_look_up(supt,page);
+    if(page_table_entry == NULL){
+        return false;
+    }
     else {
-        supte -> dirty = supte->dirty || value;
+        page_table_entry -> dirty = page_table_entry->dirty || value;
         return true;
     }
 }
 /* Load the page with the address of 'upage'. */
+/*entry 에 mapping 되어 있지만 메모리에 load 되지 않은 page를 load 한다.*/
 bool handle_mm_fault(struct vm_page_table *supt, uint32_t *pagedir, void *upage){
-    //1. Check the validity of memory reference.
-    struct vm_pt_entry *supte;
-    supte = vm_supt_look_up(supt, upage);
-    if(supte == NULL)
+    // entry 에 mapping 되어 있는지 확인, 없으면 false return
+    struct vm_pt_entry *pte;
+    pte = vm_supt_look_up(supt, upage);
+    if(pte == NULL)
         return false;
-    //If already loaded
-    if(supte->status == ON_FRAME)
+    //이미 로드 되었을때
+    if(pte->status == ON_FRAME)
         return true;
-    
-    //2. Obtain a frame to store the page.
+    //frame을 allocate 한다.
     void *frame_page = vm_frame_allocate(PAL_USER, upage);
     if(frame_page == NULL){
         return false;
     }
-
-    //3. Fetch the data into the frame.
+    //status에 맞게 data를 load한다.
     bool writable = true;
-    switch(supte->status){
+    switch(pte->status){
         case ALL_ZERO:
             memset(frame_page, 0 , PGSIZE);
             break;
-        case ON_FRAME:
+        case ON_SWAP:// swap space 에 있는 경우
+            vm_swap_in(pte->swap_index, frame_page);// 디스크에서 메모리로 load
             break;
-        case ON_SWAP:
-            //Swap in (swap disc -> data)
-            vm_swap_in(supte->swap_index, frame_page);
-            break;
-        case FROM_FILESYS:
-            if(vm_load_page_from_filesys(supte, frame_page) == false){
+        case FROM_FILESYS: // 디스크에서 메모리로 load하는 경우
+            if(vm_load_page_from_filesys(pte, frame_page)){
+                writable = pte->writable;
+            }
+            else{
                 vm_frame_free(frame_page);
                 return false;
             }
-            writable = supte->writable;
             break;
-        default:
-            PANIC("Exception");
+        case ON_FRAME:
+            break;
     }
     //4. Find the page table entry that faults virtual address to physical page.
+    //
     if(!pagedir_set_page(pagedir, upage, frame_page, writable)){
         vm_frame_free(frame_page);
         return false;
     }
-    supte->kpage = frame_page;
-    supte->status = ON_FRAME;
+    pte->kpage = frame_page;
+    pte->status = ON_FRAME;
 
     pagedir_set_dirty(pagedir, frame_page, false);
 
@@ -201,97 +224,63 @@ bool handle_mm_fault(struct vm_page_table *supt, uint32_t *pagedir, void *upage)
 
 bool vm_supt_mm_unmap(struct vm_page_table *supt, uint32_t *pagedir, void *page, 
       struct file *file, off_t offset, size_t bytes){
-    struct vm_pt_entry *supte = vm_supt_look_up(supt, page);
-    if(supte == NULL)
+    struct vm_pt_entry *pt_entry = vm_supt_look_up(supt, page);
+    if(pt_entry == NULL)
         PANIC("Some pages are missing");
-    if(supte->status == ON_FRAME){
-        ASSERT(supte -> kpage != NULL);
-        vm_frame_pin(supte->kpage);
+    if(pt_entry->status == ON_FRAME){
+        ASSERT(pt_entry -> kpage != NULL);
+        vm_frame_pin(pt_entry->kpage);
     }
     bool is_dirty;
-    switch(supte->status){
-        case ON_FRAME:
-            ASSERT (supte->kpage != NULL);
-            //If upage or mapped frame is dirty, write that to file.
-            is_dirty = supte->dirty;
-            is_dirty = is_dirty || pagedir_is_dirty(pagedir, supte->upage)||
-                pagedir_is_dirty(pagedir, supte->kpage);
-            if(is_dirty){
-                file_write_at(file, supte->upage, bytes, offset);
-            }
-
-            //clear the page mapping and free it.
-            vm_frame_free(supte->kpage);
-            pagedir_clear_page(pagedir, supte->upage);
-            break;
-
-        case ON_SWAP:
-            is_dirty = supte->dirty;
-            is_dirty = is_dirty || pagedir_is_dirty(pagedir,supte->upage);
-            //If it's dirty, then load from the swap and write that to the file.
-            if(is_dirty){
-                void *tmp_page = palloc_get_page(0);
-                vm_swap_in(supte->swap_index, tmp_page);
-                file_write_at(file,tmp_page,PGSIZE,offset);
-                palloc_free_page(tmp_page);
-            }
-            else {
-                vm_swap_free(supte->swap_index);
-            }
-            break;
-        case FROM_FILESYS:
-            break;
-
-        default : 
-            PANIC("NO WAY.");
+    bool u_is_dirty;
+    bool k_is_dirty;
+    if(pt_entry->status==ON_FRAME){
+        ASSERT (pt_entry->kpage != NULL);
+        //dirty 인지 확인하고 만약 set되었다면 file에 write한다.
+        is_dirty = pt_entry->dirty;
+        u_is_dirty=pagedir_is_dirty(pagedir, pt_entry->upage);
+        k_is_dirty=pagedir_is_dirty(pagedir, pt_entry->kpage);
+        is_dirty = is_dirty || u_is_dirty||k_is_dirty;
+        if(is_dirty){
+            file_write_at(file, pt_entry->upage, bytes, offset);
+        }
+        //page mapping을 지우고 free
+        vm_frame_free(pt_entry->kpage);
+        pagedir_clear_page(pagedir, pt_entry->upage);
     }
-
-    hash_delete(&supt->page_hashmap, &supte->elem);
+    else if(pt_entry->status==ON_SWAP){
+        is_dirty = pt_entry->dirty;
+        u_is_dirty=pagedir_is_dirty(pagedir,pt_entry->upage);
+        is_dirty = is_dirty || u_is_dirty;
+        //dirty 가 set되었다면 swap space 에서 load 하고 write file
+        if(is_dirty){
+            void *tmp_page = palloc_get_page(0);
+            vm_swap_in(pt_entry->swap_index, tmp_page);
+            file_write_at(file,tmp_page,PGSIZE,offset);
+            palloc_free_page(tmp_page);
+        }
+        else {
+            vm_swap_free(pt_entry->swap_index);
+        }
+    }
+    // page table 에서 entry 삭제
+    hash_delete(&supt->page_hashmap, &pt_entry->elem);
     return true;
 }    
 
 void vm_pin_page(struct vm_page_table *supt, void *page){
-    struct vm_pt_entry *supte = vm_supt_look_up(supt, page);
-    if(supte == NULL){
-        return;
+    struct vm_pt_entry *pt_entry = vm_supt_look_up(supt, page);
+    if(pt_entry != NULL){
+        ASSERT(pt_entry->status == ON_FRAME);
+        vm_frame_pin(pt_entry->kpage);
     }
-    ASSERT(supte->status == ON_FRAME);
-    vm_frame_pin(supte->kpage);
 }
 void vm_unpin_page(struct vm_page_table *supt, void *page){
-    struct vm_pt_entry *supte = vm_supt_look_up(supt, page);
-    if(supte == NULL)
-        PANIC("Requested page doesn't exist");
-    if(supte->status == ON_FRAME)
-        vm_frame_unpin(supte->kpage);
+    struct vm_pt_entry *pt_entry = vm_supt_look_up(supt, page);
+    if(pt_entry != NULL&&pt_entry->status == ON_FRAME)
+        vm_frame_unpin(pt_entry->kpage);
 }
 
-
-// supplemental table 의 entry를 초기화 할때 쓰는 hash func;
-static unsigned supte_hash_func(const struct hash_elem *elem, void *aux UNUSED){
-    struct vm_pt_entry *entry = hash_entry(elem, struct vm_pt_entry, elem);
-    return hash_int((int)entry->upage);
-}
-static bool supte_less_func(const struct hash_elem *a, const struct hash_elem *b, void *aux UNUSED){
-    struct vm_pt_entry *e1 = hash_entry(a, struct vm_pt_entry, elem);
-    struct vm_pt_entry *e2 = hash_entry(b, struct vm_pt_entry, elem);
-    return e1 -> upage < e2 -> upage;
-}
-static void supte_destroy_func(struct hash_elem *elem, void *aux UNUSED){
-    struct vm_pt_entry *entry = hash_entry(elem, struct vm_pt_entry, elem);
-
-    //Clean up the associated frame.
-    if(entry->kpage != NULL){
-        ASSERT(entry -> status == ON_FRAME);
-        vm_frame_remove_entry(entry->kpage);
-    }
-
-    else if(entry -> status == ON_SWAP){
-        vm_swap_free(entry->swap_index);
-    }
-    //Finally remove the entry.
-    free(entry);
-}
 static bool vm_load_page_from_filesys(struct vm_pt_entry *supte, void *kpage){
     file_seek(supte->file, supte->file_offset);
 
@@ -299,7 +288,7 @@ static bool vm_load_page_from_filesys(struct vm_pt_entry *supte, void *kpage){
     int read = file_read(supte->file, kpage, supte->read_bytes);
     if(read != (int) supte->read_bytes)
         return false;
-    ASSERT(supte->read_bytes + supte-> zero_bytes == PGSIZE);
+    ////ASSERT(supte->read_bytes + supte-> zero_bytes == PGSIZE);
     memset(kpage + read, 0, supte->zero_bytes);
     return true;
 }
@@ -308,22 +297,20 @@ void preload_and_pin_pages(const void *buffer, size_t size)
 {
   struct vm_page_table *supt = thread_current()->supt;
   uint32_t *pagedir = thread_current()->pagedir;
-
-  void *upage;
-  for(upage = pg_round_down(buffer); upage < buffer + size; upage += PGSIZE)
-  {
+  void *upage=pg_round_down(buffer);
+  while(upage < buffer + size){
     handle_mm_fault(supt, pagedir, upage);
     vm_pin_page (supt, upage);
+    upage += PGSIZE;
   }
 }
 
 void unpin_preloaded_pages(const void *buffer, size_t size)
 {
   struct vm_page_table *supt = thread_current()->supt;
-
-  void *upage;
-  for(upage = pg_round_down(buffer); upage < buffer + size; upage += PGSIZE)
-  {
+  void *upage=pg_round_down(buffer);
+  while(upage < buffer + size){
     vm_unpin_page (supt, upage);
+    upage += PGSIZE;
   }
 }

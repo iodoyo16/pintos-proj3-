@@ -316,7 +316,7 @@ process_exit (void)
   }
 
 #ifdef VM
-  vm_supt_destroy (cur->supt);
+  vm_page_table_destroy (cur->supt);
   cur->supt = NULL;
 #endif
 

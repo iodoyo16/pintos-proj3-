@@ -35,7 +35,7 @@ struct vm_pt_entry {
 
 /* Functions for manipulating supplemental page table. */
 struct vm_page_table *vm_supt_create(void);
-void vm_supt_destroy(struct vm_page_table *supt);
+void vm_page_table_destroy(struct vm_page_table *supt);
 
 bool vm_supt_install_frame(struct vm_page_table *supt, void *upage, void *kpage);
 bool expand_stack(struct vm_page_table *supt, void *);

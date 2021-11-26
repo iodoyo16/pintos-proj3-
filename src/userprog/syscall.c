@@ -38,7 +38,7 @@ syscall_init (void)
 
 int fibonacci(int n){
   int i;
-  int tmp1=0,tmp2=1,ret;
+  int tmp1=0,tmp2=1,ret=0;
   switch(n){
     case 0:
       return 0;
@@ -494,14 +494,11 @@ syscall_handler (struct intr_frame *f)
     }
 
   case SYS_MUNMAP:// 14
-    {
-      mmapid_t mid;
-      if(!is_user_vaddr(f->esp+4)){
-        sys_exit(-1);
-      }
-      sys_munmap(*(mmapid_t *)(f->esp+4));
-      break;
+    if(!is_user_vaddr(f->esp+4)){
+      sys_exit(-1);
     }
+    sys_munmap(*(mmapid_t *)(f->esp+4));
+    break;
 #endif
   }
 }
