@@ -271,32 +271,30 @@ void
 process_exit (void)
 {
   struct thread *cur = thread_current ();
-  uint32_t *pd;
-  struct process_control_block *pcb;
-  struct list_elem *e;
+  uint32_t *page_dir;
 
-  /* Erase FD*/
+  /* delete file descriptor table*/
   struct list *fdlist = &cur->file_descriptors;
   while (!list_empty(fdlist)) {
-    struct list_elem *e = list_pop_front (fdlist);
-    struct file_desc *desc = list_entry(e, struct file_desc, elem);
-    file_close(desc->file);
-    palloc_free_page(desc); // see sys_open()
+    struct list_elem *cur_e = list_pop_front (fdlist);
+    struct fd_struct *fd_ptr = list_entry(cur_e, struct fd_struct, elem);
+    file_close(fd_ptr->file);
+    palloc_free_page(fd_ptr); 
   }
 
-  /* Erase PCB */
+  /* Process control block erasing*/
   struct list *pcb_list  = &cur -> child_list;
   while(!list_empty(pcb_list)){
-    e = list_pop_front(pcb_list);
-    pcb = list_entry(e, struct process_control_block,elem);
-    if(pcb->exited == true){
-      palloc_free_page(pcb->cmdline);
-      palloc_free_page(pcb); //already signed
+    struct list_elem *cur_e = list_pop_front(pcb_list);
+    struct process_control_block *cur_pcb;
+    cur_pcb = list_entry(cur_e, struct process_control_block,elem);
+    if(!cur_pcb->exited){
+      cur_pcb->orphan = true;
+      cur_pcb->parent_thread = NULL;
     }
     else{
-      //the child process became an orphan, so they should have pcb yet.
-      pcb->orphan = true;
-      pcb->parent_thread = NULL;
+      palloc_free_page(cur_pcb->cmdline);
+      palloc_free_page(cur_pcb); //already signed
     }
   }
 
@@ -304,46 +302,30 @@ process_exit (void)
   // mmap descriptors
   struct list *mmlist = &cur->mmap_list;
   while (!list_empty(mmlist)) {
-    struct list_elem *e = list_begin (mmlist);
-    struct mmap_desc *desc = list_entry(e, struct mmap_desc, elem);
+    struct list_elem *cur_e = list_begin (mmlist);
+    struct mmap_desc *desc = list_entry(cur_e, struct mmap_desc, elem);
 
     // in sys_munmap(), the element is removed from the list
     sys_munmap (desc->id);
     //ASSERT( sys_munmap (desc->id) == true );
   }
 #endif
-
-  /* Unblock the waiting parent process, if any, from wait().
-     now its resource (pcb on page, etc.) can be freed. */
-  /* IMPORTANT : The order of setting pcb->exited as true does matter.
-     To guarantee that the process and pcb is not used any more when freeing it
-     (i.e. in wait() procedure -- see near L250),
-     we have to run this assignment as late as possible
-     (just before a switch context might happen). */
   cur->pcb->exited = true;
   bool cur_orphan = cur->pcb->orphan;
   sema_up (&cur->pcb->sema_wait);
-
-  // In this context, cur->pcb is supposed to be freed (so don't access it)
-  // Destroy the pcb object by itself, if it is orphan (which is stored before)
-  // see (part 2) of above.
   if (cur_orphan) {
     palloc_free_page (& cur->pcb);
   }
 
 #ifdef VM
-  // Destroy the SUPT, its all SPTEs, all the frames, and swaps.
-  // Important: All the frames held by this thread should ALSO be freed
-  // (see the destructor of SPTE). Otherwise an access to frame with
-  // its owner thread had been died will result in fault.
   vm_supt_destroy (cur->supt);
   cur->supt = NULL;
 #endif
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
-  pd = cur->pagedir;
-  if (pd != NULL)
+  page_dir = cur->pagedir;
+  if (page_dir != NULL)
     {
       /* Correct ordering here is crucial.  We must set
          cur->pagedir to NULL before switching page directories,
@@ -354,7 +336,7 @@ process_exit (void)
          that's been freed (and cleared). */
       cur->pagedir = NULL;
       pagedir_activate (NULL);
-      pagedir_destroy (pd);
+      pagedir_destroy (page_dir);
     }
 }
 
@@ -723,8 +705,8 @@ install_page (void *upage, void *kpage, bool writable)
 
   /* Verify that there's not already a page at that virtual
      address, then map our page there. */
-  bool success = (pagedir_get_page (t->pagedir, upage) == NULL);
-  success = success && pagedir_set_page (t->pagedir, upage, kpage, writable);
+  bool get_success = (pagedir_get_page (t->pagedir, upage) == NULL);
+  bool success = get_success && pagedir_set_page (t->pagedir, upage, kpage, writable);
 #ifdef VM
   success = success && vm_supt_install_frame (t->supt, upage, kpage);
   if(success) vm_frame_unpin(kpage);
@@ -734,18 +716,14 @@ install_page (void *upage, void *kpage, bool writable)
 
 struct process_control_block *process_find_child(pid_t child_tid){
   struct thread *t = thread_current();
-  struct list *child_list = &(t->child_list);
+  struct list *chld_lst = &(t->child_list);
 
   //To find the process with tid  == 'child_tid'
-  struct process_control_block *child_pcb = NULL;
-  struct list_elem *nt = NULL;
-  struct process_control_block *pcb = NULL;
-  if(!list_empty(child_list)){
-    for(nt = list_begin(child_list);nt != list_end(child_list);nt = list_next(nt)){
-      pcb = list_entry(nt,struct process_control_block,elem);
-
-      if(pcb -> pid == child_tid){
-        child_pcb = pcb;
+  struct list_elem *cur_e = NULL;
+  if(!list_empty(chld_lst)){
+    for(cur_e = list_begin(chld_lst);cur_e != list_end(chld_lst);cur_e = list_next(cur_e)){
+      struct process_control_block * child_pcb = list_entry(cur_e,struct process_control_block,elem);
+      if(child_pcb -> pid == child_tid){
         return child_pcb;
       }
     }

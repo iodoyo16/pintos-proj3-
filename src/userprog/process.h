@@ -31,7 +31,7 @@ struct process_control_block {
 };
 
 //File descriptor
-struct file_desc {
+struct fd_struct {
     int id;
     struct list_elem elem;
     struct file* file;

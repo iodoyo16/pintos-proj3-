@@ -20,9 +20,9 @@ void sys_seek(int fd, unsigned position);
 unsigned sys_tell(int fd);
 void sys_close(int fd);
 
-
 int fibonacci(int n);
 int max_of_four_int(int a,int b, int c, int d);
+
 #ifdef VM
 void sys_munmap(mmapid_t);
 mmapid_t sys_mmap(int fd, void *);

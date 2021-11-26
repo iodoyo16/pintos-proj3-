@@ -14,14 +14,14 @@
 #include "threads/vaddr.h"
 #include "threads/malloc.h"
 
-struct lock filesys_lock;
+struct lock file_system_lock;
 
 void check_user(const uint8_t *addr);
 static int get_user(const uint8_t *addr);
 //static bool put_user(uint8_t *udst,uint8_t byte);
 static int read_user(void *src, void *dst, size_t bytes);
 static void syscall_handler (struct intr_frame *);
-static struct file_desc* find_file_desc(struct thread *t,int fd);
+static struct fd_struct* find_file_desc(struct thread *t,int fd);
 static void is_invalid(void);
 
 #ifdef VM
@@ -31,7 +31,7 @@ static struct mmap_desc* find_mmap_desc(struct thread *, mmapid_t fd);
 void
 syscall_init (void) 
 {
-  lock_init(&filesys_lock);
+  lock_init(&file_system_lock);
   intr_register_int (0x30, 3, INTR_ON, syscall_handler, "syscall");
 }
 
@@ -59,6 +59,304 @@ int max_of_four_int(int a, int b, int c, int d){
   tmp2=c>d? c:d;
   return tmp1>tmp2?tmp1:tmp2;
 }
+
+void sys_halt(void){
+  shutdown_power_off();
+}
+
+void sys_exit(int status){
+  struct thread *t =thread_current();
+  printf("%s: exit(%d)\n",thread_name(),status);
+
+  struct process_control_block *proc_ctrl_blk = t -> pcb;
+  if(proc_ctrl_blk != NULL)
+    proc_ctrl_blk -> exitcode = status;
+  thread_exit();
+}
+
+pid_t sys_exec(const char *cmd_line){
+  check_user((const uint8_t *)cmd_line);
+  lock_acquire(&file_system_lock);
+  pid_t pid = process_execute(cmd_line);
+  lock_release(&file_system_lock);
+  return  pid;
+}
+int sys_wait(pid_t pid){
+  return process_wait(pid);
+}
+
+bool sys_create(const char *file_name, unsigned initial_size){
+  if(file_name==NULL||!is_user_vaddr(file_name))
+    sys_exit(-1);
+  check_user((const uint8_t*)file_name);
+  lock_acquire(&file_system_lock);
+  bool success = filesys_create(file_name,initial_size);
+  lock_release(&file_system_lock);
+  return success;
+}
+
+bool sys_remove(const char *file_name){
+  if(file_name==NULL||!is_user_vaddr(file_name))
+    sys_exit(-1);
+  check_user((const uint8_t*)file_name);
+  lock_acquire(&file_system_lock);
+  bool success = filesys_remove(file_name);
+  lock_release(&file_system_lock);
+  return success;
+}
+
+int sys_open(const char *file_name){
+  struct fd_struct* fd;
+  struct file *openfile;
+  if(file_name==NULL||!is_user_vaddr(file_name))
+    sys_exit(-1);  
+  check_user((const uint8_t*)file_name);
+  fd = palloc_get_page(0);
+  if(!fd) 
+    return -1;
+
+  lock_acquire(&file_system_lock);
+  openfile = filesys_open(file_name);
+  if(openfile != NULL){
+    if(strcmp(thread_name(),file_name) == 0){
+    file_deny_write(openfile);
+    }
+    fd->file = openfile;
+    struct list* fd_list = &thread_current()->file_descriptors;
+    if(list_empty(fd_list)){
+      fd->id = 3;
+    }
+    else{
+      fd->id = (list_entry(list_back(fd_list),struct fd_struct,elem)->id) + 1;
+    }
+    list_push_back(fd_list,&(fd->elem));
+    lock_release(&file_system_lock);
+    return fd->id;
+  }
+  palloc_free_page(fd);
+  lock_release(&file_system_lock);
+  return -1;
+}
+
+int sys_filesize(int fd){
+  struct fd_struct* fd_ptr;
+  lock_acquire(&file_system_lock);
+  fd_ptr = find_file_desc(thread_current(),fd);
+
+  if(fd_ptr == NULL){
+    lock_release(&file_system_lock);
+    return -1;
+  }
+  int ret_value = file_length(fd_ptr->file);
+  lock_release(&file_system_lock);
+  return ret_value;
+}
+
+int sys_read(int fd, void *buffer, unsigned size){
+  check_user((const uint8_t *)buffer);
+  check_user((const uint8_t *)buffer + size -1);
+
+  lock_acquire(&file_system_lock);
+  int ret_value;
+
+  if(fd == 0){
+    unsigned i;
+    for(i = 0;i<size;i++){//STDIN
+      if(!input_getc()){
+        sys_exit(-1);
+      }
+    }
+    ret_value = size;
+  }
+
+  else{
+    struct fd_struct* fd_ptr = find_file_desc(thread_current(),fd);
+    if(fd_ptr==NULL){
+      lock_release(&file_system_lock);
+      sys_exit(-1);
+    }
+    if(fd && fd_ptr->file){
+#ifdef VM
+      preload_and_pin_pages(buffer, size);
+#endif
+      ret_value = file_read(fd_ptr->file,buffer,size);
+#ifdef VM
+      unpin_preloaded_pages(buffer, size);
+#endif
+    }
+    else{
+      ret_value = -1;
+    }
+  }
+  lock_release(&file_system_lock);
+  return ret_value;
+}
+
+int sys_write(int fd, const void *buffer,unsigned size){
+  //printf("%d\n",size);
+  int ret_value;
+  check_user((const uint8_t*)buffer);
+  check_user((const uint8_t*)buffer + size -1);
+
+  lock_acquire(&file_system_lock);
+  if(fd == 1){
+    putbuf(buffer,size);
+    ret_value = size;
+  }
+  else {
+    struct fd_struct *fd_ptr = find_file_desc(thread_current(),fd);
+    if(fd_ptr==NULL){
+      lock_release(&file_system_lock);
+      sys_exit(-1);
+    }
+    if(fd_ptr && fd_ptr->file){
+#ifdef VM
+      preload_and_pin_pages(buffer, size);
+#endif
+      ret_value = file_write(fd_ptr->file,buffer,size);
+#ifdef VM
+      unpin_preloaded_pages(buffer, size);
+#endif
+    }
+    else{
+      ret_value = -1;
+    }
+  }
+  lock_release(&file_system_lock);
+  return ret_value;
+}
+
+void sys_seek(int fd, unsigned position){
+  lock_acquire(&file_system_lock);
+  struct fd_struct* fd_ptr = find_file_desc(thread_current(),fd);
+  if(fd_ptr && fd_ptr->file){
+    file_seek(fd_ptr->file,position);
+  }
+  else
+    return;
+  lock_release(&file_system_lock);
+}
+
+unsigned sys_tell(int fd){
+  lock_acquire(&file_system_lock);
+  struct fd_struct* fd_ptr = find_file_desc(thread_current(),fd);
+  unsigned ret;
+  if(fd_ptr && fd_ptr->file){
+    ret = file_tell(fd_ptr->file);
+  }
+  else
+    ret = -1;
+  lock_release(&file_system_lock);
+  return ret;
+}
+
+void sys_close(int fd){
+  lock_acquire(&file_system_lock);
+  struct fd_struct *fd_ptr = find_file_desc(thread_current(),fd);
+  if(fd_ptr && fd_ptr->file){
+    file_close(fd_ptr->file);
+    list_remove(&(fd_ptr->elem));
+    palloc_free_page(fd_ptr);
+  }
+  lock_release(&file_system_lock);
+}
+
+#ifdef VM
+mmapid_t sys_mmap(int fd, void *upage) {
+  struct file *f = NULL;
+  if (upage == NULL || pg_ofs(upage) != 0) 
+    return -1;
+  if (fd <= 1) 
+    return -1; 
+  struct thread *cur = thread_current();
+
+  lock_acquire (&file_system_lock);
+
+  /* 1. Open file */
+  struct fd_struct* fd_ptr = find_file_desc(thread_current(), fd);
+  if(fd_ptr && fd_ptr->file) {
+    // reopen file so that it doesn't interfere with process itself
+    // it will be store in the mmap_desc struct (later closed on munmap)
+    f = file_reopen (fd_ptr->file);
+  }
+  if(f == NULL) 
+    goto MMAP_FAIL;
+
+  size_t file_size = file_length(f);
+  if(file_size == 0) 
+    goto MMAP_FAIL;
+
+  /* 2. Mapping memory pages
+   First, ensure that all the page address is NON-EXIESENT. */
+  size_t offset;
+  for (offset = 0; offset < file_size; offset += PGSIZE) {
+    void *addr = upage + offset;
+    if (vm_supt_has_entry(cur->supt, addr)) goto MMAP_FAIL;
+  }
+
+  /* Now, map each page to filesystem */
+  for (offset = 0; offset < file_size; offset += PGSIZE) {
+    void *addr = upage + offset;
+
+    size_t read_bytes = (offset + PGSIZE < file_size ? PGSIZE : file_size - offset);
+    size_t zero_bytes = PGSIZE - read_bytes;
+
+    vm_supt_install_filesys(cur->supt, addr,
+        f, offset, read_bytes, zero_bytes, true);
+  }
+
+  /* 3. Assign mmapid */
+  mmapid_t mid;
+  if (! list_empty(&cur->mmap_list)) {
+    mid = list_entry(list_back(&cur->mmap_list), struct mmap_desc, elem)->id + 1;
+  }
+  else mid = 1;
+
+  struct mmap_desc *mmap_d = (struct mmap_desc*) malloc(sizeof(struct mmap_desc));
+  mmap_d->id = mid;
+  mmap_d->file = f;
+  mmap_d->addr = upage;
+  mmap_d->size = file_size;
+
+  list_push_back (&cur->mmap_list, &mmap_d->elem);
+
+  lock_release (&file_system_lock);
+  return mid;
+
+MMAP_FAIL:
+  lock_release (&file_system_lock);
+  return -1;
+}
+
+void sys_munmap(mmapid_t mid)
+{
+  struct thread *curr = thread_current();
+  struct mmap_desc *mmap_d = find_mmap_desc(curr, mid);
+
+  if(mmap_d == NULL) { // not found such mid
+    return ; // or fail_invalid_access() ?
+  }
+
+  lock_acquire (&file_system_lock);
+  {
+    // Iterate through each page
+    size_t offset, file_size = mmap_d->size;
+    for(offset = 0; offset < file_size; offset += PGSIZE) {
+      void *addr = mmap_d->addr + offset;
+      size_t bytes = (offset + PGSIZE < file_size ? PGSIZE : file_size - offset);
+      vm_supt_mm_unmap (curr->supt, curr->pagedir, addr, mmap_d->file, offset, bytes);
+    }
+
+    // Free resources, and remove from the list
+    list_remove(& mmap_d->elem);
+    file_close(mmap_d->file);
+    free(mmap_d);
+  }
+  lock_release (&file_system_lock);
+
+  return ;
+}
+#endif
 static void
 syscall_handler (struct intr_frame *f) 
 {
@@ -86,10 +384,10 @@ syscall_handler (struct intr_frame *f)
 
     case SYS_EXEC: //2
     {
-      void *cmd_line;
-      read_user(f->esp+4,&cmd_line,sizeof(cmd_line));
-      int return_code = sys_exec((const char*)cmd_line);
-      f->eax = (uint32_t) return_code;
+      void *cmd;
+      read_user(f->esp+4,&cmd,sizeof(cmd));
+      int ret_value = sys_exec((const char*)cmd);
+      f->eax = (uint32_t) ret_value;
       break;
     }
 
@@ -208,311 +506,10 @@ syscall_handler (struct intr_frame *f)
   }
 }
 
-///////////////////////////////////////
-////////////Implementation/////////////
-///////////////////////////////////////
 
-void sys_halt(void){
-  shutdown_power_off();
-}
 
-void sys_exit(int status){
-  struct thread *t =thread_current();
-  printf("%s: exit(%d)\n",thread_name(),status);
+/************Memory Check******/
 
-  struct process_control_block *proc_ctrl_blk = t -> pcb;
-  if(proc_ctrl_blk != NULL)
-    proc_ctrl_blk -> exitcode = status;
-  thread_exit();
-}
-
-pid_t sys_exec(const char *cmd_line){
-  check_user((const uint8_t *)cmd_line);
-  lock_acquire(&filesys_lock);
-  pid_t pid = process_execute(cmd_line);
-  lock_release(&filesys_lock);
-  return  pid;
-}
-int sys_wait(pid_t pid){
-  return process_wait(pid);
-}
-
-bool sys_create(const char *file_name, unsigned initial_size){
-  if(file_name==NULL||!is_user_vaddr(file_name))
-    sys_exit(-1);
-  check_user((const uint8_t*)file_name);
-  lock_acquire(&filesys_lock);
-  bool success = filesys_create(file_name,initial_size);
-  lock_release(&filesys_lock);
-  return success;
-}
-
-bool sys_remove(const char *file_name){
-  if(file_name==NULL||!is_user_vaddr(file_name))
-    sys_exit(-1);
-  check_user((const uint8_t*)file_name);
-  lock_acquire(&filesys_lock);
-  bool success = filesys_remove(file_name);
-  lock_release(&filesys_lock);
-  return success;
-}
-
-int sys_open(const char *file_name){
-  struct file_desc* fd;
-  struct file *openfile;
-  if(file_name==NULL||!is_user_vaddr(file_name))
-    sys_exit(-1);  
-  check_user((const uint8_t*)file_name);
-  fd = palloc_get_page(0);
-  if(!fd) 
-    return -1;
-
-  lock_acquire(&filesys_lock);
-  openfile = filesys_open(file_name);
-  if(openfile != NULL){
-    if(strcmp(thread_name(),file_name) == 0){
-    file_deny_write(openfile);
-    }
-    fd->file = openfile;
-    struct list* fd_list = &thread_current()->file_descriptors;
-    if(list_empty(fd_list)){
-      fd->id = 3;
-    }
-    else{
-      fd->id = (list_entry(list_back(fd_list),struct file_desc,elem)->id) + 1;
-    }
-    list_push_back(fd_list,&(fd->elem));
-    lock_release(&filesys_lock);
-    return fd->id;
-  }
-  palloc_free_page(fd);
-  lock_release(&filesys_lock);
-  return -1;
-}
-
-int sys_filesize(int fd){
-  struct file_desc* desc;
-  lock_acquire(&filesys_lock);
-  desc = find_file_desc(thread_current(),fd);
-
-  if(desc == NULL){
-    lock_release(&filesys_lock);
-    return -1;
-  }
-  int return_code = file_length(desc->file);
-  lock_release(&filesys_lock);
-  return return_code;
-}
-
-int sys_read(int fd, void *buffer, unsigned size){
-  check_user((const uint8_t *)buffer);
-  check_user((const uint8_t *)buffer + size -1);
-
-  lock_acquire(&filesys_lock);
-  int return_code;
-
-  if(fd == 0){
-    unsigned i;
-    for(i = 0;i<size;i++){//STDIN
-      if(!input_getc()){
-        sys_exit(-1);
-      }
-    }
-    return_code = size;
-  }
-
-  else{
-    struct file_desc* desc = find_file_desc(thread_current(),fd);
-    if(desc==NULL){
-      lock_release(&filesys_lock);
-      sys_exit(-1);
-    }
-    if(fd && desc->file){
-#ifdef VM
-      preload_and_pin_pages(buffer, size);
-#endif
-      return_code = file_read(desc->file,buffer,size);
-#ifdef VM
-      unpin_preloaded_pages(buffer, size);
-#endif
-    }
-    else{
-      return_code = -1;
-    }
-  }
-  lock_release(&filesys_lock);
-  return return_code;
-}
-
-int sys_write(int fd, const void *buffer,unsigned size){
-  //printf("%d\n",size);
-  int return_code;
-  check_user((const uint8_t*)buffer);
-  check_user((const uint8_t*)buffer + size -1);
-
-  lock_acquire(&filesys_lock);
-  if(fd == 1){
-    putbuf(buffer,size);
-    return_code = size;
-  }
-  else {
-    struct file_desc *desc = find_file_desc(thread_current(),fd);
-    if(desc==NULL){
-      lock_release(&filesys_lock);
-      sys_exit(-1);
-    }
-    if(desc && desc->file){
-#ifdef VM
-      preload_and_pin_pages(buffer, size);
-#endif
-      return_code = file_write(desc->file,buffer,size);
-#ifdef VM
-      unpin_preloaded_pages(buffer, size);
-#endif
-    }
-    else{
-      return_code = -1;
-    }
-  }
-  lock_release(&filesys_lock);
-  return return_code;
-}
-
-void sys_seek(int fd, unsigned position){
-  lock_acquire(&filesys_lock);
-  struct file_desc* desc = find_file_desc(thread_current(),fd);
-  if(desc && desc->file){
-    file_seek(desc->file,position);
-  }
-  else
-    return;
-  lock_release(&filesys_lock);
-}
-
-unsigned sys_tell(int fd){
-  lock_acquire(&filesys_lock);
-  struct file_desc* desc = find_file_desc(thread_current(),fd);
-  unsigned ret;
-  if(desc && desc->file){
-    ret = file_tell(desc->file);
-  }
-  else
-    ret = -1;
-  lock_release(&filesys_lock);
-  return ret;
-}
-
-void sys_close(int fd){
-  lock_acquire(&filesys_lock);
-  struct file_desc *desc = find_file_desc(thread_current(),fd);
-  if(desc && desc->file){
-    file_close(desc->file);
-    list_remove(&(desc->elem));
-    palloc_free_page(desc);
-  }
-  lock_release(&filesys_lock);
-}
-
-#ifdef VM
-mmapid_t sys_mmap(int fd, void *upage) {
-  struct file *f = NULL;
-  if (upage == NULL || pg_ofs(upage) != 0) 
-    return -1;
-  if (fd <= 1) 
-    return -1; 
-  struct thread *cur = thread_current();
-
-  lock_acquire (&filesys_lock);
-
-  /* 1. Open file */
-  struct file_desc* desc = find_file_desc(thread_current(), fd);
-  if(desc && desc->file) {
-    // reopen file so that it doesn't interfere with process itself
-    // it will be store in the mmap_desc struct (later closed on munmap)
-    f = file_reopen (desc->file);
-  }
-  if(f == NULL) 
-    goto MMAP_FAIL;
-
-  size_t file_size = file_length(f);
-  if(file_size == 0) 
-    goto MMAP_FAIL;
-
-  /* 2. Mapping memory pages
-   First, ensure that all the page address is NON-EXIESENT. */
-  size_t offset;
-  for (offset = 0; offset < file_size; offset += PGSIZE) {
-    void *addr = upage + offset;
-    if (vm_supt_has_entry(cur->supt, addr)) goto MMAP_FAIL;
-  }
-
-  /* Now, map each page to filesystem */
-  for (offset = 0; offset < file_size; offset += PGSIZE) {
-    void *addr = upage + offset;
-
-    size_t read_bytes = (offset + PGSIZE < file_size ? PGSIZE : file_size - offset);
-    size_t zero_bytes = PGSIZE - read_bytes;
-
-    vm_supt_install_filesys(cur->supt, addr,
-        f, offset, read_bytes, zero_bytes, true);
-  }
-
-  /* 3. Assign mmapid */
-  mmapid_t mid;
-  if (! list_empty(&cur->mmap_list)) {
-    mid = list_entry(list_back(&cur->mmap_list), struct mmap_desc, elem)->id + 1;
-  }
-  else mid = 1;
-
-  struct mmap_desc *mmap_d = (struct mmap_desc*) malloc(sizeof(struct mmap_desc));
-  mmap_d->id = mid;
-  mmap_d->file = f;
-  mmap_d->addr = upage;
-  mmap_d->size = file_size;
-
-  list_push_back (&cur->mmap_list, &mmap_d->elem);
-
-  lock_release (&filesys_lock);
-  return mid;
-
-MMAP_FAIL:
-  lock_release (&filesys_lock);
-  return -1;
-}
-
-void sys_munmap(mmapid_t mid)
-{
-  struct thread *curr = thread_current();
-  struct mmap_desc *mmap_d = find_mmap_desc(curr, mid);
-
-  if(mmap_d == NULL) { // not found such mid
-    return ; // or fail_invalid_access() ?
-  }
-
-  lock_acquire (&filesys_lock);
-  {
-    // Iterate through each page
-    size_t offset, file_size = mmap_d->size;
-    for(offset = 0; offset < file_size; offset += PGSIZE) {
-      void *addr = mmap_d->addr + offset;
-      size_t bytes = (offset + PGSIZE < file_size ? PGSIZE : file_size - offset);
-      vm_supt_mm_unmap (curr->supt, curr->pagedir, addr, mmap_d->file, offset, bytes);
-    }
-
-    // Free resources, and remove from the list
-    list_remove(& mmap_d->elem);
-    file_close(mmap_d->file);
-    free(mmap_d);
-  }
-  lock_release (&filesys_lock);
-
-  return ;
-}
-#endif
-
-///////////////////////////////////////
-/////////////Memory Access/////////////
-///////////////////////////////////////
 
 void check_user(const uint8_t *addr){
   if(get_user(addr) == -1){
@@ -545,7 +542,7 @@ static int read_user(void *src, void *dst, size_t bytes){
   return (int)bytes;
 }
 
-static struct file_desc* find_file_desc(struct thread *t,int fd){
+static struct fd_struct* find_file_desc(struct thread *t,int fd){
   ASSERT(t!=NULL);
   if(fd < 3){
     return NULL;
@@ -554,7 +551,7 @@ static struct file_desc* find_file_desc(struct thread *t,int fd){
   struct list_elem *e;
   if(!list_empty(&t->file_descriptors)){
     for(e = list_begin(&t->file_descriptors);e !=list_end(&t->file_descriptors);e = list_next(e)){
-      struct file_desc *desc = list_entry(e, struct file_desc, elem);
+      struct fd_struct *desc = list_entry(e, struct fd_struct, elem);
       if(desc -> id == fd){
         return desc;
       }
@@ -564,8 +561,8 @@ static struct file_desc* find_file_desc(struct thread *t,int fd){
 }
 
 static void is_invalid(void){
-  if(lock_held_by_current_thread(&filesys_lock))
-    lock_release(&filesys_lock);
+  if(lock_held_by_current_thread(&file_system_lock))
+    lock_release(&file_system_lock);
   sys_exit(-1);
 }
 
