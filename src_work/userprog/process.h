@@ -54,7 +54,6 @@ int process_wait (tid_t);
 void process_exit (void);
 void process_activate (void);
 /* Project 3 */
-//void parse_cmd(char *file_name, char **argv, int *argc); //parse the string and save the command to the cmd
 void push_userstack(char** parsed_filename_argv, int argc,void **esp);
 int parse_file_name(char *input, const char **parsed_filename_argv);
 struct process_control_block *process_find_child(pid_t pid);

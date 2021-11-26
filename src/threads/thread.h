@@ -28,6 +28,7 @@ typedef int tid_t;
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
 #define FRACTION (1 << 14)
+#define INT_PART (1 << 14)
 
 /* A kernel thread or user process.
 
@@ -94,14 +95,15 @@ struct thread
     uint8_t *stack;                     /* Saved stack pointer. */
     int priority;                       /* Priority. */
     //int original_priority;
-    struct list_elem allelem;           /* List element for all threads list. */
-    struct list_elem waitelem;          /* List element stored in the wait queue */
     int64_t sleep_endtick;
 
     /* Aging */
     int nice;
     int recent_cpu;
 
+
+   struct list_elem allelem;           /* List element for all threads list. */
+   struct list_elem waitelem;          /* List element stored in the wait queue */
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
     struct list locks;
@@ -165,9 +167,26 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
-void inc_recent_cpu(void);
+void recent_cpu_inc(void);
 void update_load_avg(void);
 void update_recent_cpu(void);
+
+void update_recent_cpu_load_avg(void);
+void update_priority(void);
+
+int f_add_i(int i, int f);
+int i_sub_f(int i, int f);
+int i_mul_f(int i, int f);
+int f_div_i(int f,int i);
+int f_add_f(int f1, int f2);
+int f_sub_f(int f1, int f2);
+int f_mul_f(int f1,int f2);
+int f_div_f(int f1, int f2);
+
+int calc_load_avg(int R_threads);
+int calc_recent_cpu(struct thread* t);
+int calc_priority(struct thread* t);
+//int get_max_priority(void);
 
 
 /* Project 3 */
