@@ -29,84 +29,94 @@ struct supplemental_page_table *vm_supt_create(void){
 //vm_supt 을 삭제하는 함수
 void vm_supt_destroy(struct supplemental_page_table *supt){
     ASSERT(supt != NULL);
-    hash_destroy(&supt->page_map, supte_destroy_func);
+    struct hash* page_hash_table=&supt->page_map;
+    hash_destroy(page_hash_table, supte_destroy_func);
     free(supt);
 }
-/* Install a page(starting address 'upage') which is currently
-on the frame in the supplemental page table.
-Return true if succeed, false otherwise. */
+
+/*생성된 page의 주소(upage,kpage) 를 전달받고, 
+page table entry를 생성해 초기화하고
+page_hash_table에 insert한다.*/
 bool vm_supt_install_frame(struct supplemental_page_table *supt, void *upage, void *kpage){
-    struct supplemental_page_table_entry *supte;
-    supte = (struct supplemental_page_table_entry *) malloc(sizeof(struct supplemental_page_table_entry));
+    struct supplemental_page_table_entry *page_hash_table_entry;
+    page_hash_table_entry = (struct supplemental_page_table_entry *) malloc(sizeof(struct supplemental_page_table_entry));
 
-    supte -> upage = upage;
-    supte -> kpage = kpage;
-    supte -> status = ON_FRAME;
-    supte -> dirty = false;
-    supte -> swap_index = -1;
+    page_hash_table_entry -> upage = upage;
+    page_hash_table_entry -> kpage = kpage;
+    page_hash_table_entry -> dirty = false;
+    page_hash_table_entry -> status = ON_FRAME;
+    page_hash_table_entry -> swap_index = -1;
 
-    struct hash_elem *prev = hash_insert(&supt->page_map, &supte->elem);
-    if(prev == NULL){
-        /* Success */
-        return true;
-    }
-    else {
-        /* Fail to insert. There is already an entry. */
-        free(supte);
+    struct hash* page_hash_table=&supt->page_map;
+    struct hash_elem* pt_entry_elem=&page_hash_table_entry->elem;
+    struct hash_elem *prev = hash_insert(page_hash_table, pt_entry_elem);
+    if(prev != NULL){
+        free(page_hash_table_entry);
         return false;
     }
+    return true;
 }
-/* Install a page(starting address 'upage') which is currently on the frame in the supplemental page table.
-That page is on the status of 'ALL_ZERO'.
-Return true if succeed, false otherwise. */
+
+/*생성된 page의 주소(upage) 를 전달받고, 
+page table entry를 생성해 초기화하고 (status 가 ALL_ZERO)
+page_hash_table에 insert한다.*/
 bool expand_stack (struct supplemental_page_table *supt, void *upage){
-    struct supplemental_page_table_entry *supte = 
-        (struct supplemental_page_table_entry *)malloc(sizeof(struct supplemental_page_table_entry));
-    supte -> upage = upage;
-    supte -> kpage = NULL;
-    supte -> status = ALL_ZERO;
-    supte -> dirty = false;
+    struct supplemental_page_table_entry *page_hash_table_entry;
+    page_hash_table_entry = (struct supplemental_page_table_entry *) malloc(sizeof(struct supplemental_page_table_entry));
 
-    struct hash_elem *prev = hash_insert(&supt->page_map, &supte->elem);
-    if(prev == NULL)
-        return true;
-    else {
-        PANIC ("Duplicated Supplementary Page Table Entry for zero page");
+    page_hash_table_entry -> upage = upage;
+    page_hash_table_entry -> kpage = NULL;
+    page_hash_table_entry -> dirty = false;
+    page_hash_table_entry -> status = ALL_ZERO;
+
+    struct hash* page_hash_table=&supt->page_map;
+    struct hash_elem* pt_entry_elem=&page_hash_table_entry->elem;
+    struct hash_elem *prev = hash_insert(page_hash_table, pt_entry_elem);
+    if(prev != NULL){
+        free(page_hash_table_entry);
         return false;
     }
+    return true;
 }
+/*생성된 page의 주소(upage) 를 전달받고, 
+page table entry를 생성해 초기화하고 (status 가 FROM_FILESYS)
+page_hash_table에 insert한다.*/
 bool vm_supt_install_filesys(struct supplemental_page_table *supt, void *upage,
     struct file *file, off_t offset, uint32_t read_bytes, uint32_t zero_bytes,bool writable){
-        struct supplemental_page_table_entry *supte;
-        supte = (struct supplemental_page_table_entry *)malloc(sizeof(struct supplemental_page_table_entry));
-        supte -> upage = upage;
-        supte -> kpage = NULL;
-        supte -> status = FROM_FILESYS;
-        supte -> dirty = false;
-        supte -> file = file;
-        supte -> file_offset = offset;
-        supte -> read_bytes = read_bytes;
-        supte -> zero_bytes = zero_bytes;
-        supte -> writable = writable;
+    struct supplemental_page_table_entry *page_hash_table_entry;
+    page_hash_table_entry = (struct supplemental_page_table_entry *) malloc(sizeof(struct supplemental_page_table_entry));
+    
+    page_hash_table_entry -> upage = upage;
+    page_hash_table_entry -> kpage = NULL;
+    page_hash_table_entry -> status = FROM_FILESYS;
+    page_hash_table_entry -> dirty = false;
+    page_hash_table_entry -> file = file;
+    page_hash_table_entry -> file_offset = offset;
+    page_hash_table_entry -> read_bytes = read_bytes;
+    page_hash_table_entry -> zero_bytes = zero_bytes;
+    page_hash_table_entry -> writable = writable;
 
-        struct hash_elem *prev = hash_insert(&supt->page_map, &supte->elem);
-        if(prev == NULL) return true;
-        else {
-            PANIC("There's already entry.");
-            return false;
-        }
-
-    }
-
-bool vm_supt_set_swap(struct supplemental_page_table *supt, void *page, swap_index_t swap_index){
-    struct supplemental_page_table_entry *supte;
-    supte = vm_supt_look_up(supt,page);
-    if(supte == NULL)
+    struct hash* page_hash_table=&supt->page_map;
+    struct hash_elem* pt_entry_elem=&page_hash_table_entry->elem;
+    struct hash_elem *prev = hash_insert(page_hash_table, pt_entry_elem);
+    if(prev != NULL){
+        free(page_hash_table_entry);
         return false;
-    supte -> status = ON_SWAP;
-    supte -> kpage = NULL;
-    supte -> swap_index = swap_index;
+    }
     return true;
+}
+/*vm_supt_look_up을 이용해서 page_table_entry의 flag
+를 swap 으로 set 한다 (ON_SWAP)*/
+bool vm_supt_set_swap(struct supplemental_page_table *supt, void *page, swap_index_t swap_index){
+    struct supplemental_page_table_entry *page_hash_table_entry;
+    page_hash_table_entry = vm_supt_look_up(supt,page);
+    if(page_hash_table_entry != NULL){
+        page_hash_table_entry -> status = ON_SWAP;
+        page_hash_table_entry -> kpage = NULL;
+        page_hash_table_entry -> swap_index = swap_index;
+        return true;
+    }
+    return false;
 }
 struct supplemental_page_table_entry *vm_supt_look_up (struct supplemental_page_table *supt, void *page){
     struct supplemental_page_table_entry supte_tmp;

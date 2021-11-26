@@ -104,10 +104,10 @@ struct thread
    struct list_elem allelem;           
    struct list_elem waitelem;          /* wait list */
     /*thread.c synch.c. */
-    struct list_elem elem;              
-    struct list locks;
-    struct lock *waiting_lock;
-
+   struct list_elem elem;              
+   struct list locks;
+   struct lock *waiting_lock;
+   int ppid_size;
 #ifdef USERPROG
     /* process.c. */
     uint32_t *pagedir;                  /* Page directory. */
