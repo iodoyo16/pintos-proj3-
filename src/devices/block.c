@@ -121,7 +121,9 @@ void
 block_read (struct block *block, block_sector_t sector, void *buffer)
 {
   check_sector (block, sector);
+  //printf("reading block\n");
   block->ops->read (block->aux, sector, buffer);
+  //printf("after reading block\n");
   block->read_cnt++;
 }
 

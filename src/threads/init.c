@@ -37,6 +37,10 @@
 #include "filesys/filesys.h"
 #include "filesys/fsutil.h"
 #endif
+#ifdef VM
+#include "vm/swap.h"
+#include "vm/frame.h"
+#endif
 
 /* Page directory with kernel mappings only. */
 uint32_t *init_page_dir;
@@ -73,8 +77,7 @@ static void locate_block_device (enum block_type, const char *name);
 int main (void) NO_RETURN;
 
 /* Pintos main program. */
-int
-main (void)
+int main (void)
 {
   char **argv;
 
@@ -98,13 +101,14 @@ main (void)
   palloc_init (user_page_limit);
   malloc_init ();
   paging_init ();
-
+#ifdef VM
+  vm_frame_init();
+#endif
   /* Segmentation. */
 #ifdef USERPROG
   tss_init ();
   gdt_init ();
 #endif
-
   /* Initialize interrupt handlers. */
   intr_init ();
   timer_init ();
@@ -126,9 +130,11 @@ main (void)
   locate_block_devices ();
   filesys_init (format_filesys);
 #endif
+#ifdef VM
+  vm_swap_init();
+#endif
 
   printf ("Boot complete.\n");
-  
   /* Run actions specified on kernel command line. */
   run_actions (argv);
 
@@ -136,6 +142,7 @@ main (void)
   shutdown ();
   thread_exit ();
 }
+
 /* Clear the "BSS", a segment that should be initialized to
    zeros.  It isn't actually stored on disk or zeroed by the
    kernel loader, so we have to zero it ourselves.
@@ -252,20 +259,21 @@ parse_options (char **argv)
 #endif
 #endif
       else if (!strcmp (name, "-rs"))
-        random_init (atoi (value));
-      else if (!strcmp (name, "-mlfqs")){
+        random_init (atoi (value));   
+      else if (!strcmp (name, "-mlfqs"))
         thread_mlfqs = true;
-      }
-#ifndef USERPROG
-      else if(!strcmp (name, "-aging"))
-        thread_prior_aging =true;
-#endif
+#ifndef USERPROG     
+      else if (!strcmp (name, "-aging"))
+        thread_prior_aging = true;
+#endif  
 #ifdef USERPROG
       else if (!strcmp (name, "-ul"))
         user_page_limit = atoi (value);
 #endif
+#ifdef USERPROG
       else
         PANIC ("unknown option `%s' (use -h for help)", name);
+#endif
     }
 
   /* Initialize the random number generator based on the system
@@ -286,10 +294,9 @@ static void
 run_task (char **argv)
 {
   const char *task = argv[1];
-  
   printf ("Executing '%s':\n", task);
 #ifdef USERPROG
-  process_wait (process_execute (task));
+  process_wait (process_execute (task));  //parameter of process_wait : tid of child process
 #else
   run_test (task);
 #endif

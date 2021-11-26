@@ -4,12 +4,11 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
-
-#include "threads/synch.h"
-#ifndef USERPROG
-extern bool thread_mlfqs;
-extern bool thread_prior_aging;
+#include <threads/synch.h> /* Project #3 */
+#ifdef VM
+#include <vm/page.h>       /* Project #4 */
 #endif
+
 /* States in a thread's life cycle. */
 enum thread_status
   {
@@ -28,8 +27,8 @@ typedef int tid_t;
 #define PRI_MIN 0                       /* Lowest priority. */
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
+#define FRACTION (1 << 14)
 
-#define FD_MAX 128
 /* A kernel thread or user process.
 
    Each thread structure is stored in its own 4 kB page.  The
@@ -94,40 +93,52 @@ struct thread
     char name[16];                      /* Name (for debugging purposes). */
     uint8_t *stack;                     /* Saved stack pointer. */
     int priority;                       /* Priority. */
+    //int original_priority;
     struct list_elem allelem;           /* List element for all threads list. */
+    struct list_elem waitelem;          /* List element stored in the wait queue */
+    int64_t sleep_endtick;
+
+    /* Aging */
+    int nice;
+    int recent_cpu;
 
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
-    int recent_cpu;
-    int nice;
-    int64_t ticks_to_wake;
+    struct list locks;
+    struct lock *waiting_lock;
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
-    struct thread* parent_thread;
-    struct semaphore load_lock;
-    struct semaphore wait_lock;
-    struct semaphore mem_reap_lock;
-    struct list t_child;
-    struct list_elem t_child_elem;
-    int exit_status;
-    struct file* fd_arr[FD_MAX];
-    int is_zombie;
+    /* Owned by userprog/process.c. and userprog/syscall.c */
+    struct process_control_block *pcb; /*Process Control Block */
+    struct list child_list;            /* List of children processes */
+    struct list file_descriptors;      /* List of file_descriptors the thread contains */
+    struct list_elem child;
+    struct file *executing_file;       /* The executable file of process */
+    uint8_t *current_esp;              
+#endif
+#ifdef VM
+   struct supplemental_page_table *supt;  /* Supplemental Page Table*/
+   struct list mmap_list;                 /* List of mmap descriptors*/
 #endif
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
   };
+#ifndef USERPROG
+/* Project #3 */
+bool thread_prior_aging;
+#endif
 
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
+extern bool thread_mlfqs;
 
 void thread_init (void);
 void thread_start (void);
 
-void thread_tick (void);
 void thread_print_stats (void);
 
 typedef void thread_func (void *aux);
@@ -154,22 +165,18 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
-void update_recent_cpu_load_avg(void);
-void update_priority(void);
+void inc_recent_cpu(void);
+void update_load_avg(void);
+void update_recent_cpu(void);
 
-int f_add_i(int i, int f);
-int i_sub_f(int i, int f);
-int i_mul_f(int i, int f);
-int f_div_i(int f,int i);
-int f_add_f(int f1, int f2);
-int f_sub_f(int f1, int f2);
-int f_mul_f(int f1,int f2);
-int f_div_f(int f1, int f2);
 
-int calc_load_avg(int R_threads);
-int calc_recent_cpu(struct thread* t);
-int calc_priority(struct thread* t);
-int get_max_priority(void);
-
+/* Project 3 */
+void thread_tick (int64_t tick);
+void thread_sleep(int64_t tick);
+void thread_awake(int64_t current_tick);
+bool compare_priority(const struct list_elem *e1, const struct list_elem *e2, void *aux);\
+void thread_aging(void);
+int nearest_int(int num);
+int max_priority(void);
 
 #endif /* threads/thread.h */

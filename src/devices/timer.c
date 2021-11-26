@@ -24,10 +24,6 @@ static int64_t ticks;
    Initialized by timer_calibrate(). */
 static unsigned loops_per_tick;
 
-/*blocked queue(list)*/
-static struct list blocked_list;
-
-
 static intr_handler_func timer_interrupt;
 static bool too_many_loops (unsigned loops);
 static void busy_wait (int64_t loops);
@@ -39,9 +35,6 @@ static void real_time_delay (int64_t num, int32_t denom);
 void
 timer_init (void) 
 {
-  //!!!!!
-  list_init(&blocked_list);
-  //!!!!!!
   pit_configure_channel (0, 2, TIMER_FREQ);
   intr_register_ext (0x20, timer_interrupt, "8254 Timer");
 }
@@ -91,26 +84,25 @@ timer_elapsed (int64_t then)
   return timer_ticks () - then;
 }
 
-/* Sleeps for approximately TICKS timer ticks.  Interrupts must
-   be turned on. */
+/* Sleeps for approximately TICKS timer ticks.  
+   Interrupts must be turned on. 
+   Disable the interrupt when timer_sleep() because it can cause problem in wait queue*/
 void
 timer_sleep (int64_t ticks) 
 {
-  enum intr_level old_level;
   int64_t start = timer_ticks ();
-
+  
   ASSERT (intr_get_level () == INTR_ON);
-  /*while (timer_elapsed (start) < ticks) 
-    thread_yield ();
-  */
-  old_level=intr_disable();
-  thread_current()->ticks_to_wake=start+ticks;
-  list_push_back(&blocked_list,&thread_current()->elem);
-  thread_block();
+  enum intr_level old_level = intr_disable();
+  //Busy Waiting
+  //while (timer_elapsed (start) < ticks) 
+  //  thread_yield ();
+
+  thread_sleep(start + ticks);
   intr_set_level(old_level);
 }
 
-/* Sleeps for approximately MS milliseconds.  Interrupts must be
+/* Sleeps for approximately MS mileconds.  Interrupts must be
    turned on. */
 void
 timer_msleep (int64_t ms) 
@@ -136,7 +128,6 @@ timer_nsleep (int64_t ns)
 
 /* Busy-waits for approximately MS milliseconds.  Interrupts need
    not be turned on.
-
    Busy waiting wastes CPU cycles, and busy waiting with
    interrupts off for the interval between timer ticks or longer
    will cause timer ticks to be lost.  Thus, use timer_msleep()
@@ -149,7 +140,6 @@ timer_mdelay (int64_t ms)
 
 /* Sleeps for approximately US microseconds.  Interrupts need not
    be turned on.
-
    Busy waiting wastes CPU cycles, and busy waiting with
    interrupts off for the interval between timer ticks or longer
    will cause timer ticks to be lost.  Thus, use timer_usleep()
@@ -162,7 +152,6 @@ timer_udelay (int64_t us)
 
 /* Sleeps execution for approximately NS nanoseconds.  Interrupts
    need not be turned on.
-
    Busy waiting wastes CPU cycles, and busy waiting with
    interrupts off for the interval between timer ticks or longer
    will cause timer ticks to be lost.  Thus, use timer_nsleep()
@@ -184,32 +173,26 @@ timer_print_stats (void)
 static void
 timer_interrupt (struct intr_frame *args UNUSED)
 {
-  struct list_elem* cur_e=list_begin(&blocked_list);
   ticks++;
-  while(cur_e!=list_end(&blocked_list)){
-    struct thread* cur_t=list_entry(cur_e,struct thread, elem);
-    if(cur_t->ticks_to_wake<=ticks){
-      cur_e=list_remove(cur_e);
-      thread_unblock(cur_t);
+  //thread_tick (timer_ticks());
+  //if(thread_mlfqs || thread_prior_aging)
+  if(thread_mlfqs)
+  //increment recent_cpu of current running thread
+    inc_recent_cpu();
+  thread_awake(ticks);
+  if(thread_mlfqs){
+  //if(thread_prior_aging || thread_mlfqs){
+    //recent_cpu is updated in every second
+    if(timer_ticks() % TIMER_FREQ == 0){
+      update_load_avg();
+      update_recent_cpu();
     }
-    else{
-      cur_e=list_next(cur_e);
-    }
-  }
-  
-  if(thread_mlfqs||thread_prior_aging){
-    struct thread* cur_t=thread_current();
-    cur_t->recent_cpu=f_add_i(thread_current()->recent_cpu,1);
-    if(timer_ticks()%TIMER_FREQ==0){ // load_avg and recent_cpu updates every second
-      update_recent_cpu_load_avg();
-    }
-    if(timer_ticks()%4==0){ // priority is recalculated every 4 ticks
-      update_priority();
-      if(get_max_priority()>cur_t->priority)
-        intr_yield_on_return();
+    //Every 4 ticks, priorities are recalculated
+    if(timer_ticks() % 4 == 0){
+      thread_aging();
     }
   }
-  thread_tick ();
+  thread_tick(timer_ticks());
 }
 
 /* Returns true if LOOPS iterations waits for more than one timer
@@ -233,7 +216,6 @@ too_many_loops (unsigned loops)
 
 /* Iterates through a simple loop LOOPS times, for implementing
    brief delays.
-
    Marked NO_INLINE because code alignment can significantly
    affect timings, so that if this function was inlined
    differently in different places the results would be difficult

@@ -206,6 +206,7 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
 
   while (size > 0) 
     {
+      //printf("inode size : %d\n",size);
       /* Disk sector to read, starting byte offset within sector. */
       block_sector_t sector_idx = byte_to_sector (inode, offset);
       int sector_ofs = offset % BLOCK_SECTOR_SIZE;
@@ -219,11 +220,14 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
       int chunk_size = size < min_left ? size : min_left;
       if (chunk_size <= 0)
         break;
+      //printf("I'm here1 in inode_read\n");
+      //printf("sector_ofs: %d chunk_size: %d BLOCK_SECTOR_SIZE: %d\n",sector_ofs,chunk_size,BLOCK_SECTOR_SIZE);
 
       if (sector_ofs == 0 && chunk_size == BLOCK_SECTOR_SIZE)
         {
           /* Read full sector directly into caller's buffer. */
           block_read (fs_device, sector_idx, buffer + bytes_read);
+          //printf("block read 모두 완료\n");
         }
       else 
         {
@@ -236,6 +240,7 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
                 break;
             }
           block_read (fs_device, sector_idx, bounce);
+          //printf("I'm here4\n");
           memcpy (buffer + bytes_read, bounce + sector_ofs, chunk_size);
         }
       
@@ -245,6 +250,7 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
       bytes_read += chunk_size;
     }
   free (bounce);
+  //printf("bytes_read: %d\n",bytes_read);
 
   return bytes_read;
 }

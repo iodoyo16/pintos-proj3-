@@ -196,7 +196,6 @@ inumber (int fd)
 {
   return syscall1 (SYS_INUMBER, fd);
 }
-
 int
 fibonacci(int n)
 {

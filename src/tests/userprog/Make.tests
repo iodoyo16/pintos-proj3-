@@ -141,5 +141,3 @@ tests/userprog/multi-child-fd_PUTFILES += tests/userprog/child-close
 tests/userprog/wait-killed_PUTFILES += tests/userprog/child-bad
 tests/userprog/rox-child_PUTFILES += tests/userprog/child-rox
 tests/userprog/rox-multichild_PUTFILES += tests/userprog/child-rox
-
-tests/userprog/multi-recurse.output: TIMEOUT = 360

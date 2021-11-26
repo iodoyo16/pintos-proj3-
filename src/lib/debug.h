@@ -1,3 +1,13 @@
+#include <stdio.h>
+/*
+#define DEBUG_FLAG false
+/*/
+#define DEBUG_FLAG true
+//*/
+#define dprint(args ...) if (DEBUG_FLAG) ({printf(" [DEBUG] ");printf(args);})
+#define hprint(x) if (DEBUG_FLAG) (hex_dump((uintptr_t) x, (void **) x, 100, true))
+#define xprint(x) if (DEBUG_FLAG) ({printf("0x%08x\n", (uint32_t) x);})
+/////////////////
 #ifndef __LIB_DEBUG_H
 #define __LIB_DEBUG_H
 

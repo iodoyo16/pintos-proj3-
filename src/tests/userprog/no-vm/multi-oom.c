@@ -143,6 +143,8 @@ main (int argc, char *argv[])
 
       /* Now spawn the child that will recurse. */
       child_pid = spawn_child (n + 1, RECURSE);
+      //printf("%d\n",i);
+      //printf("child_pid : %d\n",child_pid);
 
       /* If maximum depth is reached, return result. */
       if (child_pid == -1)
@@ -150,6 +152,7 @@ main (int argc, char *argv[])
 
       /* Else wait for child to report how deeply it was able to recurse. */
       int reached_depth = wait (child_pid);
+      //printf("reached_depth : %d\n",reached_depth);
       if (reached_depth == -1)
         fail ("wait returned -1.");
 
