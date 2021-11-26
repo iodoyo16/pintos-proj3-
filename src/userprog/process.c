@@ -308,7 +308,8 @@ process_exit (void)
     struct mmap_desc *desc = list_entry(e, struct mmap_desc, elem);
 
     // in sys_munmap(), the element is removed from the list
-    ASSERT( sys_munmap (desc->id) == true );
+    sys_munmap (desc->id);
+    //ASSERT( sys_munmap (desc->id) == true );
   }
 #endif
 

@@ -25,8 +25,6 @@ static struct file_desc* find_file_desc(struct thread *t,int fd);
 static void is_invalid(void);
 
 #ifdef VM
-mmapid_t sys_mmap(int fd, void *);
-bool sys_munmap(mmapid_t);
 static struct mmap_desc* find_mmap_desc(struct thread *, mmapid_t fd);
 #endif
 
@@ -37,32 +35,54 @@ syscall_init (void)
   intr_register_int (0x30, 3, INTR_ON, syscall_handler, "syscall");
 }
 
+
+int fibonacci(int n){
+  int i;
+  int tmp1=0,tmp2=1,ret;
+  switch(n){
+    case 0:
+      return 0;
+    case 1:
+      return 1;
+    default:
+      for(i=2;i<=n;i++){
+        ret=tmp1+tmp2;
+        tmp1=tmp2;
+        tmp2=ret;
+      }
+      return ret;
+  }
+}
+int max_of_four_int(int a, int b, int c, int d){
+  int tmp1,tmp2;
+  tmp1=a>b? a:b;
+  tmp2=c>d? c:d;
+  return tmp1>tmp2?tmp1:tmp2;
+}
 static void
 syscall_handler (struct intr_frame *f) 
 {
   //hex_dump(0xbfffffe0,f->esp,100,1);
   int syscall_number;
   read_user(f->esp,&syscall_number,sizeof(syscall_number));
-  ASSERT(sizeof(syscall_number == 4));
+  //ASSERT(sizeof(syscall_number == 4));
   //printf("system call number = %d\n",syscall_number);
   
   //Store the esp, which is needed in the page fault handler.
   thread_current()->current_esp = f->esp;
   
-  switch(syscall_number){
-    case SYS_HALT: //0
-    {
+  switch(*(uint32_t *)(f->esp)){
+   case SYS_HALT:                   /* Halt the operating system. */
       sys_halt();
-      break;
-    }
+    break;
 
-    case SYS_EXIT: //1
-    {
-      int exit_code;
-      read_user(f->esp + 4,&exit_code,sizeof(exit_code));
-      sys_exit(exit_code);
-      break;
-    }
+  case SYS_EXIT:                   /* Terminate this process. */
+      // void exit (int status)
+      if(!is_user_vaddr(f->esp+4)){
+        sys_exit(-1);
+      }
+      sys_exit(*(int32_t *)(f->esp + 4));
+    break;
 
     case SYS_EXEC: //2
     {
@@ -73,134 +93,115 @@ syscall_handler (struct intr_frame *f)
       break;
     }
 
-    case SYS_WAIT: //3
-    {
-      pid_t pid;
-      read_user(f->esp + 4,&pid,sizeof(pid));
-      int ret = sys_wait(pid);
-      f->eax = (uint32_t)ret;
-      break;
-    }
+    case SYS_WAIT:                   /* Wait for a child process to die. */
+      // int wait(pit_d pid);
+      if(!is_user_vaddr(f->esp+4)){
+        sys_exit(-1);
+      }
+      f->eax=sys_wait(*(pid_t*)(f->esp + 4));
+    break;
   
-    case SYS_CREATE: //4
-    {
-      const char *file_name;
-      unsigned initial_size;
-      read_user(f->esp + 4,&file_name,sizeof(file_name));
-      read_user(f->esp + 8,&initial_size,sizeof(initial_size));
-      bool return_code = sys_create(file_name,initial_size);
-      f->eax = return_code;
-      break;
-    }
+    case SYS_CREATE:                 /* Create a file. */
+    // bool create(const char *file, unsigned initial_size);
+      if(!is_user_vaddr(f->esp+4)||!is_user_vaddr(f->esp+8)){
+        sys_exit(-1);
+      }
+      f->eax=sys_create(*(const char**)(f->esp+4),*(unsigned*)(f->esp+8));
+    break;
 
-    case SYS_REMOVE: //5
-    {
-      const char *file_name;
-      bool return_code; 
-      read_user(f->esp + 4,&file_name,sizeof(file_name));
-      return_code = sys_remove(file_name);
-      f->eax = return_code;
-      break;
-    }
+    case SYS_REMOVE:                 /* Delete a file. */
+    // bool remove (const char *file);
+      if(!is_user_vaddr(f->esp+4)){
+        sys_exit(-1);
+      }
+      f->eax=sys_remove(*(const char**)(f->esp+4));
+    break;
 
-    case SYS_OPEN: //6
-    {
-      const char *file_name;
-      int return_code;
-      read_user(f->esp + 4,&file_name,sizeof(file_name));
-      return_code = sys_open(file_name);
-      f->eax = return_code;
-      break;
-    }
+    case SYS_OPEN:                   /* Open a file. */
+    // int open (const char *file);
+      if(!is_user_vaddr(f->esp+4)){
+        sys_exit(-1);
+      }
+      f->eax=sys_open(*(const char**)(f->esp+4));
+    break;
 
-    case SYS_FILESIZE: //7
-    {
-      int fd;
-      read_user(f->esp+4,&fd,sizeof(fd));
-      int return_code = sys_filesize(fd);
-      f->eax = return_code;
-      break;
-    }
+    case SYS_FILESIZE:               /* Obtain a file's size. */
+    // int filesize (int fd);
+      if(!is_user_vaddr(f->esp+4)){
+        sys_exit(-1);
+      }
+      f->eax=sys_filesize(*(int*)(f->esp+4));
+    break;
 
-    case SYS_READ: //8
-    {
-      int fd;
-      void *buffer;
-      unsigned size;
+    case SYS_READ:                   /* Read from a file. */
+    // int read(int fd, void *buffer, unsigned size);
+      if(!is_user_vaddr(f->esp+4)||!is_user_vaddr(f->esp+8)||!is_user_vaddr(f->esp+12)){
+        sys_exit(-1);
+      }
+      f->eax=sys_read(*(int *)(f->esp + 4), (void *)*(uint32_t *)(f->esp +8), *(unsigned *)(f->esp+12));
+    break;
 
-      read_user(f->esp + 4, &fd, sizeof(fd));
-      read_user(f->esp + 8, &buffer, sizeof(buffer));
-      read_user(f->esp + 12, &size, sizeof(size));
+    case SYS_WRITE:                  /* Write to a file. */
+    // int write (int fd, const void *buffer, unsigned size);
+      if(!is_user_vaddr(f->esp+4)||!is_user_vaddr(f->esp+8)||!is_user_vaddr(f->esp+12)){
+          sys_exit(-1);
+      }
+      f->eax=sys_write(*(int *)(f->esp + 4), (void *)*(uint32_t *)(f->esp +8), *(unsigned *)(f->esp+12));
+    break;
 
-      int return_code = sys_read(fd,buffer,size);
-      f->eax = (uint32_t) return_code;
-      break;
-    }
+    case SYS_SEEK:                   /* Change position in a file. */
+    // void seek(int fd,unsigned position);
+      if(!is_user_vaddr(f->esp+4)||!is_user_vaddr(f->esp+8)){
+        sys_exit(-1);
+      }
+      sys_seek(*(int*)(f->esp+4),*(unsigned*)(f->esp+8));
+    break;
 
-    case SYS_WRITE: //9
-    {
-      int fd;
-      void *buffer;
-      unsigned size;
+    case SYS_TELL:                   /* Report current position in a file. */
+    // unsigned tell(int fd);
+      if(!is_user_vaddr(f->esp+4)){
+        sys_exit(-1);
+      }
+      f->eax=sys_tell(*(int*)(f->esp+4));
+    break;
 
-      read_user(f->esp + 4, &fd, sizeof(fd));
-      read_user(f->esp + 8, &buffer, sizeof(buffer));
-      read_user(f->esp + 12, &size, sizeof(size));
-
-      int return_code = sys_write(fd,buffer,size);
-      f->eax = (uint32_t) return_code;
-      break;
-    }
-
-    case SYS_SEEK: //10
-    {
-      int fd;
-      unsigned position;
-
-      read_user(f->esp+4, &fd, sizeof(fd));
-      read_user(f->esp+8, &position, sizeof(position));
-
-      sys_seek(fd,position);
-      break;
-    }
-
-    case SYS_TELL://11
-    {
-      int fd;
-      unsigned return_code;
-
-      read_user(f->esp+4,&fd,sizeof(fd));
-      return_code = sys_tell(fd);
-      f->eax = (uint32_t) return_code;
-      break;
-    }
-
-    case SYS_CLOSE://12
-    {
-      int fd;
-      read_user(f->esp+4, &fd, sizeof(fd));
-      sys_close(fd);
-      break;
-    }
+    case SYS_CLOSE:                  /* Close a file. */
+    // void close(int fd);
+      if(!is_user_vaddr(f->esp+4)){
+        sys_exit(-1);
+      }
+      sys_close(*(int*)(f->esp+4));
+    break;
+    case SYS_FIBO:
+      if(!is_user_vaddr(f->esp+4)){
+        sys_exit(-1);
+      }
+      f->eax=fibonacci(*(int *)(f->esp + 4));
+    break;
+    case SYS_MAXFOUR:
+      if(!is_user_vaddr(f->esp+4)||!is_user_vaddr(f->esp+8)||!is_user_vaddr(f->esp+12)||!is_user_vaddr(f->esp+16)){
+          sys_exit(-1);
+      }
+      f->eax=max_of_four_int(*(int *)(f->esp +4),*(int *)(f->esp +8),*(int *)(f->esp +12),*(int *)(f->esp +16));
+    break;
 #ifdef VM
     case SYS_MMAP:// 13
     {
-      int fd;
-      void *addr;
-      read_user(f->esp + 4, &fd, sizeof(fd));
-      read_user(f->esp + 8, &addr, sizeof(addr));
-
-      mmapid_t return_code = sys_mmap (fd, addr);
-      f->eax = return_code;
+      if(!is_user_vaddr(f->esp+4)||!is_user_vaddr(f->esp+8)){
+        sys_exit(-1);
+      }
+      mmapid_t ret_val = sys_mmap (*(int *)(f->esp+4), (void *)*(uint32_t *)(f->esp+8));
+      f->eax = ret_val;
       break;
     }
 
   case SYS_MUNMAP:// 14
     {
       mmapid_t mid;
-      read_user(f->esp + 4, &mid, sizeof(mid));
-
-      sys_munmap(mid);
+      if(!is_user_vaddr(f->esp+4)){
+        sys_exit(-1);
+      }
+      sys_munmap(*(mmapid_t *)(f->esp+4));
       break;
     }
 #endif
@@ -216,51 +217,28 @@ void sys_halt(void){
 }
 
 void sys_exit(int status){
-  printf("%s: exit(%d)\n",thread_current()->name,status);
+  struct thread *t =thread_current();
+  printf("%s: exit(%d)\n",thread_name(),status);
 
-  struct process_control_block *pcb = thread_current() -> pcb;
-  if(pcb != NULL)
-    pcb -> exitcode = status;
+  struct process_control_block *proc_ctrl_blk = t -> pcb;
+  if(proc_ctrl_blk != NULL)
+    proc_ctrl_blk -> exitcode = status;
   thread_exit();
 }
 
 pid_t sys_exec(const char *cmd_line){
-  //process_execute()함수를 호출하여 자식 프로세스 생성
-  //생성된 자식 프로세스의 프로세스 디스크립터 검색
-  //자식 프로세스의 프로그램이 적재될 때까지 대기
-  //프로그램 적재 실패 시 -1 리턴
-  //프로그램 적재 성공 시 자식 프로세스 pid 리턴
-
-  //1. Check the validity
   check_user((const uint8_t *)cmd_line);
-  //printf("Exec : %s\n",cmd_line);
-  //2. Create a new process
   lock_acquire(&filesys_lock);
   pid_t pid = process_execute(cmd_line);
-  /*
-  if(pid == PID_ERROR)
-    return pid;
-  //Obtain the new process
-  struct process_control_block *child = process_find_child(pid);
-  if(child == NULL)
-    return PID_ERROR;
-  //Wait until the new process is successfully loaded
-  while(child->waiting)
-    thread_yield();
-  if(child->orphan)
-    return PID_ERROR;
-  */
   lock_release(&filesys_lock);
   return  pid;
 }
 int sys_wait(pid_t pid){
-  //printf("Wait : %d\n",pid);
   return process_wait(pid);
 }
 
-
 bool sys_create(const char *file_name, unsigned initial_size){
-  if(file_name == NULL)
+  if(file_name==NULL||!is_user_vaddr(file_name))
     sys_exit(-1);
   check_user((const uint8_t*)file_name);
   lock_acquire(&filesys_lock);
@@ -270,7 +248,7 @@ bool sys_create(const char *file_name, unsigned initial_size){
 }
 
 bool sys_remove(const char *file_name){
-  if(file_name == NULL)
+  if(file_name==NULL||!is_user_vaddr(file_name))
     sys_exit(-1);
   check_user((const uint8_t*)file_name);
   lock_acquire(&filesys_lock);
@@ -281,38 +259,35 @@ bool sys_remove(const char *file_name){
 
 int sys_open(const char *file_name){
   struct file_desc* fd;
-  struct file *file;
-    
+  struct file *openfile;
+  if(file_name==NULL||!is_user_vaddr(file_name))
+    sys_exit(-1);  
   check_user((const uint8_t*)file_name);
   fd = palloc_get_page(0);
   if(!fd) 
     return -1;
 
   lock_acquire(&filesys_lock);
-  file = filesys_open(file_name);
-  if(file == NULL){
-    palloc_free_page(fd);
+  openfile = filesys_open(file_name);
+  if(openfile != NULL){
+    if(strcmp(thread_name(),file_name) == 0){
+    file_deny_write(openfile);
+    }
+    fd->file = openfile;
+    struct list* fd_list = &thread_current()->file_descriptors;
+    if(list_empty(fd_list)){
+      fd->id = 3;
+    }
+    else{
+      fd->id = (list_entry(list_back(fd_list),struct file_desc,elem)->id) + 1;
+    }
+    list_push_back(fd_list,&(fd->elem));
     lock_release(&filesys_lock);
-    return -1;
+    return fd->id;
   }
-  if(strcmp(thread_name(),file_name) == 0){
-    file_deny_write(file);
-  }
-
-  //save the file to the file descriptor
-  fd->file = file;
-  //no directory
-  //fd_list
-  struct list* fd_list = &thread_current()->file_descriptors;
-  if(list_empty(fd_list)){
-    fd->id = 3;
-  }
-  else{
-    fd->id = (list_entry(list_back(fd_list),struct file_desc,elem)->id) + 1;
-  }
-  list_push_back(fd_list,&(fd->elem));
+  palloc_free_page(fd);
   lock_release(&filesys_lock);
-  return fd->id;
+  return -1;
 }
 
 int sys_filesize(int fd){
@@ -382,6 +357,10 @@ int sys_write(int fd, const void *buffer,unsigned size){
   }
   else {
     struct file_desc *desc = find_file_desc(thread_current(),fd);
+    if(desc==NULL){
+      lock_release(&filesys_lock);
+      sys_exit(-1);
+    }
     if(desc && desc->file){
 #ifdef VM
       preload_and_pin_pages(buffer, size);
@@ -501,13 +480,13 @@ MMAP_FAIL:
   return -1;
 }
 
-bool sys_munmap(mmapid_t mid)
+void sys_munmap(mmapid_t mid)
 {
   struct thread *curr = thread_current();
   struct mmap_desc *mmap_d = find_mmap_desc(curr, mid);
 
   if(mmap_d == NULL) { // not found such mid
-    return false; // or fail_invalid_access() ?
+    return ; // or fail_invalid_access() ?
   }
 
   lock_acquire (&filesys_lock);
@@ -527,7 +506,7 @@ bool sys_munmap(mmapid_t mid)
   }
   lock_release (&filesys_lock);
 
-  return true;
+  return ;
 }
 #endif
 
