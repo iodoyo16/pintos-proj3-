@@ -7,26 +7,18 @@
 #include "threads/palloc.h"
 
 
-/*
-kpage : The address of kernel page of mapped frame which is the key in the hash table.
-upage : The address of virtual memory or user page that loads the frame.
-*/
 
-/* Initialize */
+
 void vm_frame_init(void);
+/*kpage : mapping된 frame의 kernel page 주소 , page frame hash fuction의 key 값이다.*/
 
-/* Create a frame page corresponding to user virtual address upage. 
-After the page mapping, return the kernel address of created page frame. */
 void* vm_frame_allocate(enum palloc_flags flag, void *upage);
-
-/* Free the page frame. 
-Remove the entry in the frame table, free the memory resource. */ 
-void vm_frame_free(void* kpage);
-/* Just remove the entry from table, do not palloc free */
-void vm_frame_remove_entry(void *kpage);
+/*upage가 가리키는 virtual page에 해당하는 frame page를 생성하고 page frame의 
+kernel 주소를 반환한다.*/
 void vm_frame_do_free (void *kpage, bool free_page);
-
-/*For pinning*/
+void vm_frame_free(void* kpage);
+void vm_frame_remove_entry(void *kpage); // entry 만 제거하고 page를 free하지는 않는다.ㄴ
+static void vm_frame_set_pinned (void *kpage, bool new_value);
 void vm_frame_pin(void*kpage);
 void vm_frame_unpin(void *kapge);
 
