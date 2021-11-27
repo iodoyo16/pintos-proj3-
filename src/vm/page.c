@@ -170,7 +170,6 @@ bool vm_pt_set_dirty(struct vm_page_table *pt, void *page, bool value){
         return true;
     }
 }
-/* Load the page with the address of 'upage'. */
 /*entry 에 mapping 되어 있지만 메모리에 load 되지 않은 page를 load 한다.*/
 bool handle_mm_fault(struct vm_page_table *pt, uint32_t *pagedir, void *upage){
     // entry 에 mapping 되어 있는지 확인, 없으면 false return
@@ -207,7 +206,6 @@ bool handle_mm_fault(struct vm_page_table *pt, uint32_t *pagedir, void *upage){
         case ON_FRAME:
             break;
     }
-    //4. Find the page table entry that faults virtual address to physical page.
     //
     if(!pagedir_set_page(pagedir, upage, frame_page, writable)){
         vm_frame_free(frame_page);
@@ -231,15 +229,12 @@ bool vm_pt_mm_unmap(struct vm_page_table *pt, uint32_t *pagedir, void *page,
         ASSERT(pt_entry -> kpage != NULL);
         vm_frame_pin(pt_entry->kpage);
     }
-    bool is_dirty;
-    bool u_is_dirty;
-    bool k_is_dirty;
     if(pt_entry->status==ON_FRAME){
         ASSERT (pt_entry->kpage != NULL);
         //dirty 인지 확인하고 만약 set되었다면 file에 write한다.
-        is_dirty = pt_entry->dirty;
-        u_is_dirty=pagedir_is_dirty(pagedir, pt_entry->upage);
-        k_is_dirty=pagedir_is_dirty(pagedir, pt_entry->kpage);
+        bool is_dirty = pt_entry->dirty;
+        bool u_is_dirty=pagedir_is_dirty(pagedir, pt_entry->upage);
+        bool k_is_dirty=pagedir_is_dirty(pagedir, pt_entry->kpage);
         is_dirty = is_dirty || u_is_dirty||k_is_dirty;
         if(is_dirty){
             file_write_at(file, pt_entry->upage, bytes, offset);
@@ -249,8 +244,8 @@ bool vm_pt_mm_unmap(struct vm_page_table *pt, uint32_t *pagedir, void *page,
         pagedir_clear_page(pagedir, pt_entry->upage);
     }
     else if(pt_entry->status==ON_SWAP){
-        is_dirty = pt_entry->dirty;
-        u_is_dirty=pagedir_is_dirty(pagedir,pt_entry->upage);
+        bool is_dirty = pt_entry->dirty;
+        bool u_is_dirty=pagedir_is_dirty(pagedir,pt_entry->upage);
         is_dirty = is_dirty || u_is_dirty;
         //dirty 가 set되었다면 swap space 에서 load 하고 write file
         if(is_dirty){
@@ -271,7 +266,7 @@ bool vm_pt_mm_unmap(struct vm_page_table *pt, uint32_t *pagedir, void *page,
 void vm_pin_page(struct vm_page_table *pt, void *page){
     struct vm_pt_entry *pt_entry = vm_pt_look_up(pt, page);
     if(pt_entry != NULL){
-        ASSERT(pt_entry->status == ON_FRAME);
+        //ASSERT(pt_entry->status == ON_FRAME);
         vm_frame_pin(pt_entry->kpage);
     }
 }
@@ -283,12 +278,9 @@ void vm_unpin_page(struct vm_page_table *pt, void *page){
 
 static bool vm_load_page_from_filesys(struct vm_pt_entry *pte, void *kpage){
     file_seek(pte->file, pte->file_offset);
-
-    //read bytes from the file
     int read = file_read(pte->file, kpage, pte->read_bytes);
     if(read != (int) pte->read_bytes)
         return false;
-    ////ASSERT(pte->read_bytes + pte-> zero_bytes == PGSIZE);
     memset(kpage + read, 0, pte->zero_bytes);
     return true;
 }

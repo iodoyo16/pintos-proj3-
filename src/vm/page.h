@@ -5,35 +5,31 @@
 #include "filesys/off_t.h"
 
 enum page_status {
-    ALL_ZERO,   /* Filled with zeros. */
-    ON_FRAME,   /* Active in memory. */
-    ON_SWAP,    /* Being Swapped. */
-    FROM_FILESYS/* In filesystem. */
+    ALL_ZERO,   
+    ON_FRAME,   
+    ON_SWAP,    
+    FROM_FILESYS
 };
 
-/* Supplemental page table. It is preprocessable. */
 struct vm_page_table {
     struct hash page_hashmap;
 };
 
 struct vm_pt_entry {
-    void *upage;     /* Virtual address of the page. */
-    void *kpage;     /* Kernel page(frame) associated, */
+    void *upage;     
+    void *kpage;     
 
     struct hash_elem elem;
     enum page_status status;
     bool dirty;
-    //if ON_SWAP status
-    swap_index_t swap_index;    /* Store the swap index if the page is swapped out. */
-
-    //if FROM_FILESYS status
+    
+    swap_index_t swap_index;    
     struct file *file;
     off_t file_offset;
     uint32_t read_bytes, zero_bytes;
     bool writable;
 };
 
-/* Functions for manipulating supplemental page table. */
 struct vm_page_table *vm_pt_create(void);
 void vm_page_table_destroy(struct vm_page_table *pt);
 

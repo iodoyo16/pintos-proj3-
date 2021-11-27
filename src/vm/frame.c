@@ -60,16 +60,17 @@ vm_frame_allocate (enum palloc_flags flags, void *upage)
   if (frame_page == NULL) {
     //swap out 해서 page할당할 공간을 만든다.
     struct frame_table_entry *evic_entry = clock_algorithm( thread_current()->pagedir );
-    pagedir_clear_page(evic_entry->t->pagedir, evic_entry->upage);
+    uint32_t* evict_pagedir=evic_entry->t->pagedir;
+    pagedir_clear_page(evict_pagedir, evic_entry->upage);
     bool is_dirty = false;
-    bool u_is_dirty=pagedir_is_dirty(evic_entry->t->pagedir, evic_entry->upage);
-    bool k_is_dirty=pagedir_is_dirty(evic_entry->t->pagedir, evic_entry->kpage);
+    bool u_is_dirty=pagedir_is_dirty(evict_pagedir, evic_entry->upage);
+    bool k_is_dirty=pagedir_is_dirty(evict_pagedir, evic_entry->kpage);
     is_dirty = is_dirty || u_is_dirty;
     is_dirty = is_dirty|| k_is_dirty;
     swap_index_t swap_idx = vm_swap_out( evic_entry->kpage );
     vm_pt_set_swap(evic_entry->t->supt, evic_entry->upage, swap_idx);
     vm_pt_set_dirty(evic_entry->t->supt, evic_entry->upage, is_dirty);
-    vm_frame_flag_free(evic_entry->kpage, true); 
+    vm_frame_del_entry_freepage(evic_entry->kpage); 
     frame_page = palloc_get_page (PAL_USER | flags);
   }
   struct frame_table_entry *fte = malloc(sizeof(struct frame_table_entry));
@@ -91,17 +92,17 @@ vm_frame_allocate (enum palloc_flags flags, void *upage)
 }
 void vm_frame_free (void *kpage){
   lock_acquire (&frame_lock);
-  vm_frame_flag_free (kpage, true);
+  vm_frame_del_entry_freepage(kpage);
   lock_release (&frame_lock);
 }
 
 void vm_frame_remove_entry (void *kpage){
   lock_acquire (&frame_lock);
-  vm_frame_flag_free (kpage, false);
+  vm_frame_del_entry_notfreepage(kpage);
   lock_release (&frame_lock);
 }
 
-void vm_frame_flag_free (void *kpage, bool free_flag){
+void vm_frame_del_entry_freepage (void *kpage){
   struct frame_table_entry tmp_fte;
   tmp_fte.kpage = kpage;
   struct hash_elem *find_e = hash_find (&frame_map, &(tmp_fte.helem));
@@ -109,13 +110,26 @@ void vm_frame_flag_free (void *kpage, bool free_flag){
     struct frame_table_entry *fte= hash_entry(find_e, struct frame_table_entry, helem);
     hash_delete (&frame_map, &fte->helem);
     list_remove (&fte->lelem);
-    if(free_flag) {
-      palloc_free_page(kpage);
-    }
+    palloc_free_page(kpage);
     free(fte);
+  }else{
+    sys_exit(-1);
   }
 }
-
+void vm_frame_del_entry_notfreepage (void *kpage){
+  struct frame_table_entry tmp_fte;
+  tmp_fte.kpage = kpage;
+  struct hash_elem *find_e = hash_find (&frame_map, &(tmp_fte.helem));
+  if (find_e != NULL) {
+    struct frame_table_entry *fte= hash_entry(find_e, struct frame_table_entry, helem);
+    hash_delete (&frame_map, &fte->helem);
+    list_remove (&fte->lelem);
+    free(fte);
+  }
+  else{
+    sys_exit(-1);
+  }
+}
 struct frame_table_entry* clock_pointing_frame(void){
   if (!list_empty(&frame_list)){
     if(victim_ptr == NULL){
@@ -133,7 +147,10 @@ struct frame_table_entry* clock_pointing_frame(void){
 }
 struct frame_table_entry* clock_algorithm( uint32_t *pagedir ) {
   size_t n = hash_size(&frame_map);
-  for(size_t it = 0; it <= n + n; ++ it) // prevent infinite loop. 
+  if(n<=0){
+    sys_exit(-1);
+  }
+  for(size_t it = 0; it <= 2*n; ++ it) // prevent infinite loop. 
   {
     struct frame_table_entry *e = clock_pointing_frame();
     if(e->pinned)
@@ -144,8 +161,6 @@ struct frame_table_entry* clock_algorithm( uint32_t *pagedir ) {
     }
     return e;
   }
-
-  PANIC ("Can't evict any frame. \n");
 }
 
 void vm_frame_pin (void* kpage) {

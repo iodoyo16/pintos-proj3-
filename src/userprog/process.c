@@ -30,10 +30,6 @@
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
 
-/* Starts a new thread running a user program loaded from
-   `cmdline`. The new thread may be scheduled (and may even exit)
-   before process_execute() returns.  Returns the new process's
-   thread id, or TID_ERROR if the thread cannot be created. */
 pid_t
 process_execute (const char *file_name) 
 {
@@ -43,14 +39,11 @@ process_execute (const char *file_name)
   tid_t tid;
   char *save_ptr = NULL;
 
-  /* Make a copy of FILE_NAME. for PCB
-     Otherwise there's a race between the caller and load(). */
   fn_copy = palloc_get_page (0);
   if (fn_copy == NULL)
     goto failed;
   strlcpy (fn_copy, file_name, PGSIZE);
   
-  //make thread name
   cmd_copy = palloc_get_page(0);
   if(cmd_copy == NULL)
     goto failed;
@@ -64,9 +57,6 @@ process_execute (const char *file_name)
   if(filesys_open(cmd_copy)==NULL)
     return -1;
   
-
-  //Before to create a thread, 
-  //create a pcb along with the name and pass it into the new thread
   pcb = palloc_get_page(0);
   if(pcb == NULL)
     goto failed;
@@ -78,26 +68,25 @@ process_execute (const char *file_name)
   pcb -> orphan = false;
   pcb -> exitcode = -1;
 
-  //Initialization
+  
   sema_init(&pcb->sema_init,0);
   sema_init(&pcb->sema_wait,0);
 
-  /* Create a new thread to execute FILE_NAME. */
+  
   tid = thread_create (cmd_copy, PRI_DEFAULT, start_process, pcb);
   if (tid == TID_ERROR)
     goto failed;
-  //wait until initialization inside start_process() is completed
+  
   sema_down(&pcb->sema_init);
 
   if(cmd_copy){
     palloc_free_page(cmd_copy);
   }
-  //printf("%d\n",pcb->pid);
-  //in case of success of creating process, add child process to the list
+  
   if(pcb->pid>=0){
     list_push_back(&(thread_current()->child_list),&(pcb->elem));
   }
-  //palloc_free_page(fn_copy);
+  
   return pcb->pid;
 
 failed:
@@ -114,8 +103,7 @@ failed:
 }
 
 
-/* A thread function that loads a user process and starts it
-   running. */
+
 static void
 start_process (void *pcb_)
 {
@@ -125,19 +113,19 @@ start_process (void *pcb_)
   char *file_name = (char*) pcb->cmdline;
   bool success = false;
 
-  // cmdline handling
+  
   const char **parsed_filename_argv = (const char**) palloc_get_page(0);
 
   if (parsed_filename_argv == NULL) {
     printf("Not enough memory\n");
-    // pid being -1, release lock, clean resources
+    
     goto finish; 
   }
   int argc=0;
   argc=parse_file_name(file_name,parsed_filename_argv);
   
 
-  /* Initialize interrupt frame and load executable. */
+  
   struct intr_frame if_;
   memset (&if_, 0, sizeof if_);
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
@@ -145,44 +133,22 @@ start_process (void *pcb_)
   if_.eflags = FLAG_IF | FLAG_MBS;
   success = load (file_name, &if_.eip, &if_.esp);
   if (success) {
-    //construct_stack (cmdline_tokens, cnt, &if_.esp);
     push_userstack(parsed_filename_argv, argc,&if_.esp);
   }
   palloc_free_page (parsed_filename_argv);
 
 finish:
-
-  /* Assign PCB */
-  // we maintain an one-to-one mapping between pid and tid, with identity function.
-  // pid is determined, so interact with process_execute() for maintaining child_list
   pcb->pid = success ? (pid_t)(t->tid) : PID_ERROR;
   t->pcb = pcb;
-
-  // wake up sleeping in process_execute()
   sema_up(&pcb->sema_init);
 
-  /* If load failed, quit. */
   if (!success)
     sys_exit (-1);
-
-  /* Start the user process by simulating a return from an
-     interrupt, implemented by intr_exit (in
-     threads/intr-stubs.S).  Because intr_exit takes all of its
-     arguments on the stack in the form of a `struct intr_frame',
-     we just point the stack pointer (%esp) to our stack frame
-     and jump to it. */
   asm volatile ("movl %0, %%esp; jmp intr_exit" : : "g" (&if_) : "memory");
   NOT_REACHED ();
 }
 
-/* Waits for thread TID to die and returns its exit status.  If
-   it was terminated by the kernel (i.e. killed due to an
-   exception), returns -1.  If TID is invalid or if it was not a
-   child of the calling process, or if process_wait() has already
-   been successfully called for the given TID, returns -1
-   immediately, without waiting.
-   This function will be implemented in problem 2-2.  For now, it
-   does nothing. */
+
 int parse_file_name(char *input, const char **parsed_filename_argv){
   char* tmp;
   char* check_ptr;
@@ -227,40 +193,28 @@ void push_userstack(const char** parsed_filename_argv, int argc,void **esp){
 int
 process_wait (tid_t child_tid)
 {
-  //자식 프로세스가 모두 종료될 때까지 대기
-  //자식 프로세스가 올바르게 종료됐는지 확인 
-  // lookup the process with tid equals 'child_tid' from 'child_list'
-  struct process_control_block *child_pcb = process_find_child(child_tid);
-
-  // if child process is not found, return -1 immediately
+  struct process_control_block *child_pcb = find_child_process(child_tid);
   if (child_pcb == NULL) {
     return -1;
   }
 
   if (child_pcb->waiting) {
-    // already waiting (the parent already called wait on child's pid)
-    return -1; // a process may wait for any fixed child at most once
+    return -1; 
   }
   else {
     child_pcb->waiting = true;
   }
 
-  // wait() until child terminates
-  // see process_exit() for signaling this semaphore
   if (! child_pcb->exited) {
     sema_down(& (child_pcb->sema_wait));
   }
   ASSERT (child_pcb->exited == true);
 
-  // remove from child_list
   ASSERT (child_pcb != NULL);
   list_remove (&(child_pcb->elem));
 
-  // return the exit code of the child process
   int ret = child_pcb->exitcode;
 
-  // Now the pcb object of the child process can be finally freed.
-  // (in this context, the child process is guaranteed to have been exited)
   palloc_free_page(child_pcb);
 
   return ret;
@@ -273,7 +227,6 @@ process_exit (void)
   struct thread *cur = thread_current ();
   uint32_t *page_dir;
 
-  /* delete file descriptor table*/
   struct list *fdlist = &cur->file_descriptors;
   while (!list_empty(fdlist)) {
     struct list_elem *cur_e = list_pop_front (fdlist);
@@ -282,7 +235,6 @@ process_exit (void)
     palloc_free_page(fd_ptr); 
   }
 
-  /* Process control block erasing*/
   struct list *pcb_list  = &cur -> child_list;
   while(!list_empty(pcb_list)){
     struct list_elem *cur_e = list_pop_front(pcb_list);
@@ -294,7 +246,7 @@ process_exit (void)
     }
     else{
       palloc_free_page(cur_pcb->cmdline);
-      palloc_free_page(cur_pcb); //already signed
+      palloc_free_page(cur_pcb);
     }
   }
 
@@ -305,7 +257,6 @@ process_exit (void)
     struct list_elem *cur_e = list_begin (mmlist);
     struct mmap_desc *desc = list_entry(cur_e, struct mmap_desc, elem);
     sys_munmap (desc->id);
-    //ASSERT( sys_munmap (desc->id) == true );
   }
 #endif
   cur->pcb->exited = true;
@@ -320,37 +271,22 @@ process_exit (void)
   cur->supt = NULL;
 #endif
 
-  /* Destroy the current process's page directory and switch back
-     to the kernel-only page directory. */
   page_dir = cur->pagedir;
   if (page_dir != NULL)
     {
-      /* Correct ordering here is crucial.  We must set
-         cur->pagedir to NULL before switching page directories,
-         so that a timer interrupt can't switch back to the
-         process page directory.  We must activate the base page
-         directory before destroying the process's page
-         directory, or our active page directory will be one
-         that's been freed (and cleared). */
       cur->pagedir = NULL;
       pagedir_activate (NULL);
       pagedir_destroy (page_dir);
     }
 }
 
-/* Sets up the CPU for running user code in the current
-   thread.
-   This function is called on every context switch. */
 void
 process_activate (void)
 {
   struct thread *t = thread_current ();
 
-  /* Activate thread's page tables. */
   pagedir_activate (t->pagedir);
 
-  /* Set thread's kernel stack for use in processing
-     interrupts. */
   tss_update ();
 }
 
@@ -468,7 +404,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
       goto done;
     }
 
-  /* Read program headers. */
+
   file_ofs = ehdr.e_phoff;
   for (i = 0; i < ehdr.e_phnum; i++)
     {
@@ -488,7 +424,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
         case PT_PHDR:
         case PT_STACK:
         default:
-          /* Ignore this segment. */
+          
           break;
         case PT_DYNAMIC:
         case PT_INTERP:
@@ -504,16 +440,13 @@ load (const char *file_name, void (**eip) (void), void **esp)
               uint32_t read_bytes, zero_bytes;
               if (phdr.p_filesz > 0)
                 {
-                  /* Normal segment.
-                     Read initial part from disk and zero the rest. */
+                
                   read_bytes = page_offset + phdr.p_filesz;
                   zero_bytes = (ROUND_UP (page_offset + phdr.p_memsz, PGSIZE)
                                 - read_bytes);
                 }
               else
                 {
-                  /* Entirely zero.
-                     Don't read anything from disk. */
                   read_bytes = 0;
                   zero_bytes = ROUND_UP (page_offset + phdr.p_memsz, PGSIZE);
                 }
@@ -541,9 +474,6 @@ load (const char *file_name, void (**eip) (void), void **esp)
   success = true;
 
  done:
-  /* We arrive here whether the load is successful or not. */
-
-  // do not close file here, postpone until it terminates
   return success;
 }
 
@@ -617,36 +547,28 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
   file_seek (file, ofs);
   while (read_bytes > 0 || zero_bytes > 0)
     {
-      /* Calculate how to fill this page.
-         We will read PAGE_READ_BYTES bytes from FILE
-         and zero the final PAGE_ZERO_BYTES bytes. */
       size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
       size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
 #ifdef VM
       // demand paging(lazy load) 구현
       struct thread *curr = thread_current ();
-      ASSERT (pagedir_get_page(curr->pagedir, upage) == NULL); // no virtual page yet?
+      ASSERT (pagedir_get_page(curr->pagedir, upage) == NULL);
 
       if (! vm_pt_install_filesys(curr->supt, upage,
             file, ofs, page_read_bytes, page_zero_bytes, writable) ) {
         return false;
       }
 #else
-      /* Get a page of memory. */
       uint8_t *kpage = vm_frame_allocate (PAL_USER, upage);
       if (kpage == NULL)
         return false;
-
-      /* Load this page. */
       if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes)
         {
           vm_frame_free (kpage);
           return false;
         }
       memset (kpage + page_read_bytes, 0, page_zero_bytes);
-
-      /* Add the page to the process's address space. */
       if (!install_page (upage, kpage, writable))
         {
           vm_frame_free (kpage);
@@ -687,15 +609,6 @@ setup_stack (void **esp)
   return success;
 }
 
-/* Adds a mapping from user virtual address UPAGE to kernel
-   virtual address KPAGE to the page table.
-   If WRITABLE is true, the user process may modify the page;
-   otherwise, it is read-only.
-   UPAGE must not already be mapped.
-   KPAGE should probably be a page obtained from the user pool
-   with palloc_get_page().
-   Returns true on success, false if UPAGE is already mapped or
-   if memory allocation fails. */
 static bool
 install_page (void *upage, void *kpage, bool writable)
 {
@@ -712,11 +625,10 @@ install_page (void *upage, void *kpage, bool writable)
   return success;
 }
 
-struct process_control_block *process_find_child(pid_t child_tid){
+struct process_control_block *find_child_process(pid_t child_tid){
   struct thread *t = thread_current();
   struct list *chld_lst = &(t->child_list);
 
-  //To find the process with tid  == 'child_tid'
   struct list_elem *cur_e = NULL;
   if(!list_empty(chld_lst)){
     for(cur_e = list_begin(chld_lst);cur_e != list_end(chld_lst);cur_e = list_next(cur_e)){
